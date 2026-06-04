@@ -258,7 +258,7 @@ streamlit.delta_generator.DeltaGenerator.metric = bbg_metric
 # ─────────────────────────────────────────────────────────────
 header_html = """
 <div style='background: #13110E; border-bottom: 1px solid #352a1a; display: flex; align-items: center; padding: 8px 16px; margin-bottom: 16px; margin-top: 0px;'>
-    <div style='color: #D2B48C; font-weight: 800; font-size: 1.1rem; letter-spacing: 1px; margin-right: 24px;'>TERMINAL.V1</div>
+    <div style='color: #D2B48C; font-weight: 800; font-size: 1.1rem; letter-spacing: 1px; margin-right: 24px;'>TERMINAL</div>
     <div style='flex-grow: 1; display: flex; align-items: center;'>
         <div style='background: #1A1815; border: 1px solid #352a1a; padding: 4px 12px; color: #888888; font-size: 0.8rem; width: 300px; display: flex; align-items: center;'>
             <span style='margin-right: 8px;'>🔍</span> CMD >
@@ -364,30 +364,42 @@ with st.sidebar:
     st.markdown("<div style='color: #D2B48C; font-size: 0.8rem; font-weight: bold; margin-bottom: 0px;'>ANALYTICS</div>", unsafe_allow_html=True)
     st.markdown("<div style='color: #00ff00; font-size: 0.65rem; font-weight: bold; margin-bottom: 16px;'>SYSTEM_ACTIVE</div>", unsafe_allow_html=True)
 
-    page = st.radio(
-        "Navigation",
-        [
-         "⊞ PORTFOLIO OVERVIEW",
-         "⇆ TRADE MANAGEMENT",
-         "🏦 CAPITAL OPTIMIZATION",
-         "📄 SINGLE TRADE SUMMARY", 
-         "📈 EXPOSURE ANALYTICS",
-         "🛡️ CREDIT ANALYTICS", 
-         "💰 CAPITAL ANALYTICS",
-         "⚡ STRESS TESTING",
-         "📁 V3 DATABASE STATUS",
-         "📊 V3 XVA ATTRIBUTION",
-         "📈 V3 EXOTICS & SWAPTIONS",
-         "🌐 V4 MULTI-CURVE & SABR",
-         "🧊 V4 EXPOSURE CUBE & MVA",
-         "💸 V4 PNL ATTRIBUTION",
-         "✅ V4 MODEL VALIDATION"
-        ],
-        label_visibility="collapsed"
-    )
+    PAGES = {
+        "📊 Executive Risk Dashboard": ["Executive Risk Dashboard"],
+        "📖 Trading Book": ["Trade Capture & Lifecycle", "Trade Analytics"],
+        "🛡 Counterparty Risk": ["Counterparty Exposure Analytics", "Credit Risk Analytics", "Collateral & Margin Analytics", "XVA Explain & Attribution"],
+        "📈 Market & Quant Analytics": ["Rates & Volatility Analytics", "Volatility & Optionality Analytics", "PnL Explain"],
+        "🏦 Capital & Regulation": ["Regulatory Capital Analytics", "Capital & RAROC Analytics"],
+        "⚡ Stress & Scenario Analysis": ["Stress & Scenario Analysis"],
+        "🔍 Model Risk & Validation": ["Model Risk & Validation"],
+        "⚙️ Data & Infrastructure Monitor": ["Data & Infrastructure Monitor"]
+    }
+
+    if 'current_page' not in st.session_state:
+        st.session_state.current_page = "Executive Risk Dashboard"
+
+    current_page = st.session_state.current_page
+    
+    current_cat = next((cat for cat, pages in PAGES.items() if current_page in pages), list(PAGES.keys())[0])
+
+    selected_cat = st.selectbox("Module Category", list(PAGES.keys()), index=list(PAGES.keys()).index(current_cat))
+
+    pages_in_cat = PAGES[selected_cat]
+    
+    if len(pages_in_cat) > 1:
+        default_page_index = pages_in_cat.index(current_page) if current_page in pages_in_cat else 0
+        selected_page = st.selectbox("Analytics View", pages_in_cat, index=default_page_index)
+    else:
+        selected_page = pages_in_cat[0]
+
+    if selected_page != st.session_state.current_page:
+        st.session_state.current_page = selected_page
+        st.rerun()
+
+    page = st.session_state.current_page
 
 
-    st.markdown("### ⚙️ Single Trade Parameters (V1)")
+    st.markdown("### ⚙️ Single Trade Parameters ")
 
     counterparties = get_counterparty_data()
     cpty_selected = st.selectbox(
@@ -414,7 +426,7 @@ with st.sidebar:
     vol = st.slider("Volatility (σ)", 0.005, 0.025, 0.010, 0.001)
 
     st.markdown("---")
-    st.caption("INR XVA Analytics Platform v1.0")
+    st.caption("INR XVA Analytics Platform ")
     st.caption("June 2026")
 
 
@@ -443,8 +455,8 @@ swap = SwapPricer(notional, fixed_rate, float(maturity), direction)
 # ─────────────────────────────────────────────────────────────
 # PAGE 1: Single Trade Summary
 # ─────────────────────────────────────────────────────────────
-if page == "📄 SINGLE TRADE SUMMARY":
-    st.markdown("# Single Trade Summary")
+if page == "Trade Analytics":
+    st.markdown("# Trade Analytics")
     st.markdown(f"**Counterparty:** {cpty_selected} · **Direction:** {direction} · "
                 f"**Notional:** ₹{notional:.0f} Cr · **Maturity:** {maturity}Y · "
                 f"**Fixed Rate:** {fixed_rate*100:.2f}%")
@@ -607,8 +619,8 @@ if page == "📄 SINGLE TRADE SUMMARY":
 # ─────────────────────────────────────────────────────────────
 # PAGE 2: Exposure Analytics
 # ─────────────────────────────────────────────────────────────
-elif page == "📈 EXPOSURE ANALYTICS":
-    st.markdown("# Exposure Analytics")
+elif page == "Counterparty Exposure Analytics":
+    st.markdown("# Counterparty Exposure Analytics")
     st.markdown(f"**{n_paths:,} Monte Carlo paths** · **{maturity}Y horizon** · "
                 f"Hull-White 1F (a={mean_rev}, σ={vol})")
 
@@ -762,8 +774,8 @@ elif page == "📈 EXPOSURE ANALYTICS":
 # ─────────────────────────────────────────────────────────────
 # PAGE 3: Credit Analytics
 # ─────────────────────────────────────────────────────────────
-elif page == "🛡️ CREDIT ANALYTICS":
-    st.markdown("# Credit Analytics")
+elif page == "Credit Risk Analytics":
+    st.markdown("# Credit Risk Analytics")
 
     # ── Counterparty Credit Table ──
     st.markdown("### Counterparty Credit Summary")
@@ -919,8 +931,8 @@ elif page == "🛡️ CREDIT ANALYTICS":
 # ─────────────────────────────────────────────────────────────
 # PAGE 4: Capital Analytics
 # ─────────────────────────────────────────────────────────────
-elif page == "💰 CAPITAL ANALYTICS":
-    st.markdown("# Capital Analytics")
+elif page == "Regulatory Capital Analytics":
+    st.markdown("# Regulatory Capital Analytics")
 
     # ── SA-CCR Computation ──
     st.markdown("### SA-CCR — Exposure at Default")
@@ -1057,8 +1069,8 @@ elif page == "💰 CAPITAL ANALYTICS":
 # ─────────────────────────────────────────────────────────────
 # PAGE 5: Stress Testing
 # ─────────────────────────────────────────────────────────────
-elif page == "⚡ STRESS TESTING":
-    st.markdown("# Stress Testing")
+elif page == "Stress & Scenario Analysis":
+    st.markdown("# Stress & Scenario Analysis")
 
     # ── Interactive Sliders ──
     st.markdown("### RBI Rate Shock Scenario Builder")
@@ -1226,9 +1238,9 @@ elif page == "⚡ STRESS TESTING":
 # ─────────────────────────────────────────────────────────────
 # V2 PAGES
 # ─────────────────────────────────────────────────────────────
-elif page == "⊞ PORTFOLIO OVERVIEW":
+elif page == "Executive Risk Dashboard":
     res = run_v2_engines()
-    st.title("Portfolio Overview (V2 Netting Engine)")
+    st.title("Portfolio Overview")
     
     if not res['portfolio_exposure']:
         st.info("Portfolio is empty. Go to Trade Management to add trades.")
@@ -1249,7 +1261,7 @@ elif page == "⊞ PORTFOLIO OVERVIEW":
         fig.update_layout(title="Netted Portfolio Exposure (₹ Cr)", xaxis_title="Years", yaxis_title="Exposure", **PLOTLY_LAYOUT)
         st.plotly_chart(fig, use_container_width=True)
 
-elif page == "⇆ TRADE MANAGEMENT":
+elif page == "Trade Capture & Lifecycle":
     res = run_v2_engines()
     st.title("Trade Management")
     
@@ -1287,7 +1299,7 @@ elif page == "⇆ TRADE MANAGEMENT":
             run_v2_engines.clear()
             st.success("Trade Added Successfully! Refresh to see updates.")
 
-elif page == "🏦 CAPITAL OPTIMIZATION":
+elif page == "Capital & RAROC Analytics":
     res = run_v2_engines()
     st.title("Capital Optimization & Ranking")
     
@@ -1305,7 +1317,7 @@ elif page == "🏦 CAPITAL OPTIMIZATION":
 # ─────────────────────────────────────────────────────────────
 # PAGE: V3 Modules
 # ─────────────────────────────────────────────────────────────
-elif page == "📁 V3 DATABASE STATUS":
+elif page == "Data & Infrastructure Monitor":
     st.markdown("## Database Layer")
     st.markdown("This database layer tracks the End-Of-Day (EOD) risk snapshots, manages trade portfolios, and stores counterparty reference data. It is currently powered by SQLite for local deployment.")
     # Show real counts from the actual CSV files
@@ -1325,7 +1337,7 @@ elif page == "📁 V3 DATABASE STATUS":
     st.dataframe(cpty_df, use_container_width=True)
 
 
-elif page == "📊 V3 XVA ATTRIBUTION":
+elif page == "XVA Explain & Attribution":
     st.markdown("## Daily XVA Attribution")
     st.markdown("Explains day-over-day changes in CVA using a first-order "
                 "Taylor expansion decomposition.")
@@ -1373,7 +1385,7 @@ elif page == "📊 V3 XVA ATTRIBUTION":
                            height=400)
     st.plotly_chart(fig_attr, use_container_width=True)
 
-elif page == "📈 V3 EXOTICS & SWAPTIONS":
+elif page == "Volatility & Optionality Analytics":
     st.markdown("## European Swaption Pricer")
     st.markdown("Priced using the **Bachelier (Normal) model** — the market standard "
                 "for INR swaptions, valid for near-zero and negative rate environments.")
@@ -1430,8 +1442,8 @@ elif page == "📈 V3 EXOTICS & SWAPTIONS":
 # ─────────────────────────────────────────────────────────────
 # PAGE: V4 Enhancements
 # ─────────────────────────────────────────────────────────────
-elif page == "🌐 V4 MULTI-CURVE & SABR":
-    st.markdown("## V4 Multi-Curve Framework & SABR Pricer")
+elif page == "Rates & Volatility Analytics":
+    st.markdown("## Multi-Curve Framework & SABR Pricer")
     st.markdown("Advanced pricing using dual-curve (OIS Discounting + MIBOR Forward) and Normal SABR Volatility surface.")
 
     from src.curves.multi_curve import MultiCurveFramework
@@ -1511,8 +1523,8 @@ elif page == "🌐 V4 MULTI-CURVE & SABR":
     with col_v2:
         st.plotly_chart(fig_smile, use_container_width=True)
 
-elif page == "🧊 V4 EXPOSURE CUBE & MVA":
-    st.markdown("## V4 Parquet Exposure Cube & MVA")
+elif page == "Collateral & Margin Analytics":
+    st.markdown("## Parquet Exposure Cube & MVA")
     st.markdown("Leverages `pyarrow` to persist Monte Carlo paths and efficiently compute Pathwise FVA and SIMM MVA.")
 
     from src.exposure.exposure_cube import ExposureCube
@@ -1548,7 +1560,7 @@ elif page == "🧊 V4 EXPOSURE CUBE & MVA":
             st.plotly_chart(fig, use_container_width=True)
             
             # 2. Compute FVA V2
-            st.markdown("### Pathwise FVA (V2)")
+            st.markdown("### Pathwise FVA")
             fva_engine = FVAEngineV2()
             # Use actual OIS discount factors — ois_curve is available in this scope
             dfs = np.array([ois_curve.df(float(t)) for t in time_grid])
@@ -1605,8 +1617,8 @@ elif page == "🧊 V4 EXPOSURE CUBE & MVA":
     else:
         st.warning("Exposure cube not found. Please generate it first.")
 
-elif page == "💸 V4 PNL ATTRIBUTION":
-    st.markdown("## V4 Swap PnL Attribution")
+elif page == "PnL Explain":
+    st.markdown("## Swap PnL Attribution")
     st.markdown(
         "Decomposes day-over-day PnL into **Carry, Roll-Down, Delta, Gamma, "
         "New Fixing** and **Unexplained**. Curve moves are calibrated to "
@@ -1710,8 +1722,8 @@ elif page == "💸 V4 PNL ATTRIBUTION":
         use_container_width=True
     )
 
-elif page == "✅ V4 MODEL VALIDATION":
-    st.markdown("## V4 MRM Model Validation")
+elif page == "Model Risk & Validation":
+    st.markdown("## MRM Model Validation")
     st.markdown("Executes the quantitative model validation suite to verify core pricing and simulation engines.")
     
     from src.validation.model_validator import ModelValidationSuite
