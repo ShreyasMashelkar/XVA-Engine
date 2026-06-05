@@ -42,18 +42,26 @@ reporting → database persistence.
 - **SA-CCR (Basel III)** — RC, supervisory duration, effective notional, netting set PFE
 - **RWA & Capital Charge** — Per RBI Basel III guidelines; counterparty type risk weights
 
+### Institutional Workflow & Governance
+- **Pre-Trade Approval Workflow** — Evaluates Limit usage, RAROC accretion, and Incremental XVA before Trade Approval (APPROVED/REJECTED/MANUAL_REVIEW).
+- **Incremental XVA** — Exact marginal XVA impact using identical Monte Carlo paths for clean differencing.
+- **Counterparty Limits** — EAD and PFE limit monitoring with RAG status logic across Legal Entity hierarchies.
+- **RAROC & Economic Capital** — ASRF (Asymptotic Single Risk Factor) model for Economic Capital at 99.9% confidence; Hurdle-based RAROC and EVA analysis.
+
 ### Analytics & Reporting
 - **PnL Attribution** — Carry, Roll-Down, Delta, Gamma, New Fixing, Unexplained decomposition
+- **Exposure Attribution** — Day-over-day exposure changes separated by New Trades, Matured Trades, Market Moves, and Unexplained.
 - **XVA Attribution** — Day-over-day CVA changes; spread, exposure, time-decay components
 - **Stress Testing** — RBI rate shock (±100/200bps) × credit spread widening scenarios
+- **Management Reporting API** — Consolidated daily JSON reports detailing Capital, Returns, Stress, WWR, and Governance status.
 - **Model Validation Suite** — 8 quantitative MRM tests: MC convergence, bootstrap repricing,
   antithetic VR, CVA analytical benchmark, no-arbitrage forwards, SA-CCR formulas, HW1F fit
 
 ### Infrastructure
 - **EOD Batch Engine** — Full portfolio CVA/FVA/KVA/MVA/EAD per counterparty in one run
 - **SQLite Persistence** — XVAResult, CurveSnapshot, MarketDataSnapshot via SQLAlchemy
-- **FastAPI REST Layer** — `/price/swap`, `/risk/exposure`, `/risk/cva`, `/curves/ois`, `/curves/cds/{name}`
-- **Streamlit Dashboard** — 14 pages across v1–v4 feature tiers
+- **FastAPI REST Layer** — Comprehensive API endpoints for pricing, curves, and trade approval pipelines.
+- **Streamlit Dashboard** — 15+ pages organized into institutional categories with dynamic dual-dropdown navigation.
 
 ---
 
@@ -101,23 +109,29 @@ XVA Engine/
 │   ├── calibration/      # HW1F calibration from MIBOR history
 │   ├── curves/           # OIS/G-Sec bootstrapping, multi-curve, CDS bootstrapper
 │   ├── data_ingestion/   # Market data (FIMMDA/DBIE anchored)
+│   ├── economic_capital/ # ASRF Economic Capital models
+│   ├── eod/              # EOD Risk Engine
 │   ├── exposure/         # Persistent Parquet exposure cube
-│   ├── montecarlo/       # Hull-White 1F simulation + calibrate_hw1f()
+│   ├── limits/           # Limit engine
+│   ├── montecarlo/       # Hull-White 1F/2F simulation + Quasi-MC
 │   ├── csa/              # CSA collateral engine
 │   ├── portfolio/        # Netting engine, capital optimizer
 │   ├── pricing/          # Swap pricer, swaption (Bachelier), SABR
-│   ├── sa_ccr/           # SA-CCR EAD, RWA, capital
+│   ├── raroc/            # RAROC engine
+│   ├── reporting/        # Management reporting API
+│   ├── sa_ccr/           # SA-CCR EAD, RWA, capital, FRTB-CVA
 │   ├── stress/           # Rate shock + credit spread stress tests
+│   ├── utils/            # Autodiff, vectorised ops
 │   ├── validation/       # Model validation suite (MRM)
-│   ├── wwr/              # Wrong-way risk (regime-switching)
-│   └── xva/              # CVA, DVA, FVA v1/v2, KVA, MVA, SIMM,
-│                         # PnL attribution, XVA attribution
+│   ├── workflow/         # Trade approval, hierarchy, incremental XVA
+│   ├── wwr/              # Specific & General wrong-way risk
+│   └── xva/              # CVA, DVA, FVA v1/v2, KVA, MVA, SIMM
 ├── api/                  # FastAPI REST endpoints
-├── app/                  # Streamlit dashboard (14 pages)
+├── app/                  # Streamlit dashboard (15+ pages)
 ├── db/                   # SQLAlchemy models + SQLite
 ├── data/                 # Portfolio, counterparties, CSA master, exposure cube
 ├── reports/              # EOD batch output CSV
-├── tests/                # Pytest suite (12 test files, 80+ tests)
+├── tests/                # Pytest suite (29 test files, 163 tests)
 └── requirements.txt
 
 ---
@@ -130,4 +144,4 @@ Python 3.10+ · NumPy · SciPy · Pandas · PyArrow · Plotly · Streamlit · Fa
 
 ## Resume Line
 
-> Built an end-to-end INR OTC derivatives risk and XVA analytics platform. Implemented FBIL MIBOR OIS curve bootstrapping, SABR vol surface, Hull-White 1F Monte Carlo (calibrated from RBI DBIE MIBOR history via OLS), CSA-aware exposure simulation with a persistent Parquet exposure cube, and full XVA suite (CVA/DVA/FVA/MVA/KVA) including ISDA SIMM v2.7 IM, pathwise FVA, regime-switching wrong-way risk, Basel SA-CCR capital, and a PnL attribution engine. Includes an MRM model validation suite, FastAPI REST layer, SQLite persistence, and a 14-page Streamlit dashboard. All data from free Indian market sources (RBI DBIE, FIMMDA, FBIL).
+> Built an end-to-end INR OTC derivatives risk, XVA analytics, and institutional governance platform. Implemented FBIL MIBOR OIS curve bootstrapping, SABR vol surface, Hull-White 1F Monte Carlo, CSA-aware exposure simulation via a persistent Parquet cube, and full XVA suite (CVA/DVA/FVA/MVA/KVA). Engineered a complete front-to-back institutional workflow integrating Basel SA-CCR capital, Economic Capital (ASRF), pre-trade limits, Incremental XVA via identical MC paths, and RAROC-based automated Trade Approval. Includes an MRM model validation suite, PnL/Exposure attribution, FastAPI REST layer, SQLite persistence, and a comprehensive 15+ page Streamlit dashboard. All data anchored to free Indian market sources (RBI DBIE, FIMMDA).
