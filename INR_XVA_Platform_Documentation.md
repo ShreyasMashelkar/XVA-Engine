@@ -172,7 +172,28 @@ Simulates actual Indian market dislocations:
 
 ---
 
-## 11. Technology Stack
+## 11. Institutional Workflow & Governance
+
+The platform implements a front-to-back institutional decision-making pipeline, transforming raw analytics into actionable governance.
+
+### 11.1 Pre-Trade Approval Workflow
+- **Incremental XVA:** Computes the exact marginal XVA impact of adding a new trade to the existing portfolio using identical Monte Carlo paths for clean differencing.
+- **Counterparty Limits:** Pre-trade checks against EAD and PFE thresholds, assigning RED (>100%), AMBER (>80%), or GREEN (<80%) utilization statuses across the Legal Entity hierarchy.
+- **RAROC & Economic Capital:** Computes Economic Capital at a 99.9% confidence interval using the Asymptotic Single Risk Factor (ASRF) model. Evaluates trade accretion via Risk-Adjusted Return on Capital (RAROC) and Economic Value Added (EVA).
+- **Automated Decisioning:** Orchestrates the limits, RAROC, and XVA modules to output an `APPROVED`, `REJECTED`, or `MANUAL_REVIEW` decision.
+
+### 11.2 Wrong-Way Risk (WWR)
+- Detects Specific WWR (trade linked directly to counterparty performance) and General WWR (macro correlation).
+- Applies deterministic stress multipliers to exposure profiles (e.g., 1.5× for Specific WWR) to compute portfolio-weighted stressed CVA, fulfilling EBA regulatory guidelines.
+
+### 11.3 Attribution & Management Reporting
+- **PnL Attribution:** Decomposes daily swap PnL into Carry, Roll-Down, Delta, Gamma, New Fixing, and Unexplained components.
+- **Exposure Attribution:** Explains day-over-day exposure changes via New Trades, Matured Trades, Market Moves, and Unexplained.
+- **Management Reporting API:** Consolidated daily JSON reports summarizing Capital, Returns, Stress, WWR, and Governance status.
+
+---
+
+## 12. Technology Stack
 
 - **Core Computation:** Python 3.10+, `numpy` (vectorized HW1F simulations), `scipy`, `pandas`.
 - **Persistence:** SQLite via `SQLAlchemy` ORM.
@@ -182,7 +203,7 @@ Simulates actual Indian market dislocations:
 
 ---
 
-## 12. Resume Writeup Example
+## 13. Resume Writeup Example
 
-> **End-to-End Counterparty Credit Risk & XVA Platform (Python/FastAPI)**
-> Engineered an institutional-grade OTC derivatives risk platform specialized for the Indian rates market. Developed a 3-tier automated data pipeline scraping live FBIL MIBOR and RBI DBIE data, stored in a local SQLite data warehouse via an EOD batch engine. Built a multi-curve (OIS/G-Sec) pricing framework and a highly vectorized 10,000-path Hull-White Monte Carlo engine. Modeled exact ISDA CSA collateral netting mechanics, flooring Expected Positive Exposure (EPE), and capturing ENE for DVA. Implemented a piecewise-constant CDS term-structure bootstrapper for accurate CVA, alongside FVA and KVA modules. Built Basel III SA-CCR capital calculators for EAD/RWA. Designed a FastAPI backend and a Bloomberg-style Streamlit dashboard featuring live historical stress tests (e.g., 2013 Taper Tantrum, COVID-19 shocks).
+> **End-to-End Counterparty Credit Risk & Institutional XVA Platform (Python/FastAPI)**
+> Engineered an institutional-grade OTC derivatives risk and governance platform specialized for the Indian rates market. Developed a 3-tier automated data pipeline scraping live FBIL MIBOR and RBI DBIE data, stored in a local SQLite data warehouse via an EOD batch engine. Built a multi-curve (OIS/G-Sec) pricing framework and a highly vectorized 10,000-path Hull-White Monte Carlo engine with a persistent Parquet exposure cube. Modeled exact ISDA CSA collateral netting mechanics, flooring Expected Positive Exposure (EPE), and capturing ENE for DVA. Implemented a piecewise-constant CDS term-structure bootstrapper for CVA, alongside FVA, KVA, and MVA modules. Designed a complete front-to-back pre-trade approval workflow integrating Basel SA-CCR capital, Economic Capital (ASRF), limits monitoring, and Incremental XVA. Built a FastAPI backend and a Bloomberg-style 15-page Streamlit dashboard featuring PnL/Exposure attribution, Wrong-Way Risk (WWR) stress testing, and historical scenario replays (e.g., 2013 Taper Tantrum).
