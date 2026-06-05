@@ -66,7 +66,8 @@ class XVABacktester:
         kupiec_pvalue = float(1.0 - chi2.cdf(lr, df=1))
 
         # Breach flag: reject H0 at 95% (p < 0.05 means model is mis-calibrated)
-        is_breach = kupiec_pvalue < 0.05
+        # A zero-exception result must never be a breach (model is conservative).
+        is_breach = (kupiec_pvalue < 0.05) and (total_exceptions > 0)
 
         return {
             'total_observations':      total_observations,

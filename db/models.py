@@ -56,3 +56,52 @@ class MarketDataSnapshot(Base):
     run_date      = Column(String, index=True)
     metric        = Column(String)   # e.g. 'repo_rate', 'mibor_on', 'ois_5y'
     value         = Column(Float)
+
+
+class IncrementalXVAResult(Base):
+    __tablename__ = "incremental_xva_results"
+    id            = Column(Integer, primary_key=True, index=True)
+    run_date      = Column(String, index=True)
+    counterparty  = Column(String, index=True)
+    proposed_trade_id = Column(String, index=True)
+    incr_cva_cr   = Column(Float); incr_fva_cr = Column(Float)
+    incr_mva_cr   = Column(Float); incr_kva_cr = Column(Float)
+    incr_total_xva_cr = Column(Float); incr_ead_cr = Column(Float); incr_capital_cr = Column(Float)
+
+
+class LegalEntity(Base):
+    __tablename__ = "legal_entities"
+    id            = Column(Integer, primary_key=True, index=True)
+    entity_id     = Column(String, unique=True, index=True)
+    entity_name   = Column(String)
+    country       = Column(String)
+    rating        = Column(String)
+
+
+class NettingSetRef(Base):
+    __tablename__ = "netting_sets"
+    id            = Column(Integer, primary_key=True, index=True)
+    netting_set_id= Column(String, unique=True, index=True)
+    entity_id     = Column(String, ForeignKey("legal_entities.entity_id"))
+    csa_id        = Column(String)
+    margin_period_of_risk = Column(Integer)  # MPR in days
+
+
+class CounterpartyLimit(Base):
+    __tablename__ = "counterparty_limits"
+    id            = Column(Integer, primary_key=True, index=True)
+    entity_id     = Column(String, ForeignKey("legal_entities.entity_id"), index=True)
+    metric        = Column(String)  # 'PFE_95', 'EAD', 'MTM', etc.
+    limit_amount  = Column(Float)
+
+
+class TradeApproval(Base):
+    __tablename__ = "trade_approvals"
+    id            = Column(Integer, primary_key=True, index=True)
+    trade_id      = Column(String, index=True)
+    decision      = Column(String)  # APPROVED, REJECTED, MANUAL_REVIEW
+    reasons       = Column(String)
+    incremental_xva = Column(Float)
+    trade_raroc   = Column(Float)
+    portfolio_raroc_impact = Column(Float)
+    limit_status  = Column(String)

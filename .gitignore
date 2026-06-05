@@ -11,3 +11,11 @@ data/raw/
 *.log
 .env
 .venv/
+
+# AI Agent & IDE directories
+.agents/
+.claude/
+skills-lock.json
+
+# Temporary scripts
+fix_*.py

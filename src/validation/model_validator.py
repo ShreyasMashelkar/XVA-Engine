@@ -280,11 +280,21 @@ class ModelValidationSuite:
         hw = HullWhite1F(self.curve, a=0.10, sigma=0.01)
         errors = []
         test_tenors = [0.5, 1.0, 2.0, 5.0, 10.0]
+        
+        t_grid, paths = hw.simulate_rates(n_paths=5000, n_steps=120, horizon=10.0, seed=42)
+        dfs = hw.simulate_discount_factors(t_grid, paths)
+        
+        max_err = 0.0
         for T in test_tenors:
             market_df = self.curve.df(T)
-            # HW bond price from analytical formula (using _theta)
-            # We verify the theta calibration holds by checking simulated mean path
-            pass  # Full verification is in test_calibration.py
+            idx = int(np.argmin(np.abs(t_grid - T)))
+            sim_df = float(np.mean(dfs[:, idx]))
+            err = abs(sim_df - market_df) * 10000  # in bps
+            max_err = max(max_err, err)
+
+        pass_cond = max_err < 20.0
+        self._record('HW1F Term Structure Error (bps)', max_err, 20.0, 'bps',
+                      pass_cond, 'Max error between MC mean DF and OIS DF')
 
         # Simpler check: theta(t) defined, no NaNs
         thetas = [hw._theta(t) for t in np.linspace(0.01, 5.0, 20)]

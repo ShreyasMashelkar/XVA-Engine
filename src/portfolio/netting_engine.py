@@ -14,7 +14,7 @@ class NettingEngine:
         
         self.csas = PortfolioManager.load_csas().set_index('CSA_ID').to_dict(orient='index')
 
-    def calculate_trade_mtm_paths(self, trades: List[Dict[str, Any]]) -> Dict[int, np.ndarray]:
+    def calculate_trade_mtm_paths(self, trades: List[Dict[str, Any]], projection_curve=None) -> Dict[int, np.ndarray]:
         """Calculates MTM paths for each trade individually."""
         trade_paths = {}
         for trade in trades:
@@ -28,7 +28,8 @@ class NettingEngine:
             mtm = self.model.compute_swap_mtm_paths(
                 self.time_grid, self.rate_paths,
                 notional=notional, fixed_rate=fixed_rate,
-                maturity=maturity, direction=direction
+                maturity=maturity, direction=direction,
+                projection_curve=projection_curve
             )
             trade_paths[tid] = mtm
             

@@ -154,7 +154,7 @@ class TestSwapPricer:
         class DummySurface(VolSurface):
             def __init__(self):
                 pass
-            def get_vol(self, expiry, tenor, strike, forward):
+            def implied_vol(self, expiry, tenor, F, K):
                 return 0.05
                 
         swaption = EuropeanSwaption(notional=1e6, strike=0.07, maturity=1.0, 

@@ -45,12 +45,12 @@ class EuropeanSwaption:
         if normal_vol is None:
             normal_vol = self.get_vol(forward_rate)
             
-        d1 = (np.log(forward_rate / self.strike) + 0.5 * normal_vol**2 * self.maturity) / (normal_vol * np.sqrt(self.maturity))
-        d2 = d1 - normal_vol * np.sqrt(self.maturity)
+        T = self.maturity
+        d = (forward_rate - self.strike) / (normal_vol * np.sqrt(T))
         if option_type == 'payer':
-            price = annuity * (forward_rate * norm.cdf(d1) - self.strike * norm.cdf(d2))
+            price = annuity * ((forward_rate - self.strike) * norm.cdf(d) + normal_vol * np.sqrt(T) * norm.pdf(d))
         else:
-            price = annuity * (self.strike * norm.cdf(-d2) - forward_rate * norm.cdf(-d1))
+            price = annuity * ((self.strike - forward_rate) * norm.cdf(-d) + normal_vol * np.sqrt(T) * norm.pdf(d))
         return price * self.notional
 
     def delta(self, forward_swap_rate, vol, annuity, model='black76',

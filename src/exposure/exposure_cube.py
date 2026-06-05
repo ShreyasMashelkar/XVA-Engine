@@ -85,12 +85,25 @@ class ExposureCube:
         df = pd.concat(self._buffer, ignore_index=True)
         table = pa.Table.from_pandas(df, schema=self.SCHEMA,
                                      preserve_index=False)
+        import uuid
         if append and self.cube_path.exists():
-            existing = pq.read_table(str(self.cube_path))
-            combined = pa.concat_tables([existing, table])
-            pq.write_table(combined, str(self.cube_path))
+            if self.cube_path.is_file():
+                existing = pq.read_table(str(self.cube_path))
+                self.cube_path.unlink()
+                self.cube_path.mkdir(parents=True, exist_ok=True)
+                pq.write_table(existing, self.cube_path / f"part-{uuid.uuid4().hex}.parquet")
         else:
-            pq.write_table(table, str(self.cube_path))
+            if self.cube_path.exists():
+                if self.cube_path.is_file():
+                    self.cube_path.unlink()
+                else:
+                    import shutil
+                    shutil.rmtree(self.cube_path)
+                    
+        if not self.cube_path.exists():
+            self.cube_path.mkdir(parents=True, exist_ok=True)
+            
+        pq.write_table(table, self.cube_path / f"part-{uuid.uuid4().hex}.parquet")
 
         self._buffer = []
         self._buffer_rows = 0
@@ -151,6 +164,12 @@ class ExposureCube:
             return {'exists': False}
         table = pq.read_table(str(self.cube_path))
         df = table.to_pandas()
+        
+        if self.cube_path.is_dir():
+            size_bytes = sum(f.stat().st_size for f in self.cube_path.rglob('*') if f.is_file())
+        else:
+            size_bytes = self.cube_path.stat().st_size
+            
         return {
             'exists':        True,
             'n_rows':        len(df),
@@ -158,10 +177,14 @@ class ExposureCube:
             'trade_list':    df['trade_id'].unique().tolist(),
             'n_paths':       df['path_id'].nunique(),
             'n_timesteps':   df['time_step'].nunique(),
-            'size_mb':       self.cube_path.stat().st_size / 1e6,
+            'size_mb':       size_bytes / 1e6,
         }
 
     def clear(self):
         """Delete cube file (for testing/reset)."""
         if self.cube_path.exists():
-            self.cube_path.unlink()
+            if self.cube_path.is_file():
+                self.cube_path.unlink()
+            else:
+                import shutil
+                shutil.rmtree(self.cube_path)

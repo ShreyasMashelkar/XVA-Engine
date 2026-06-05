@@ -126,6 +126,9 @@ class VolSurface:
     def implied_vol(self, expiry: float, tenor: float,
                     F: float, K: float) -> float:
         """Interpolate vol surface at given expiry/tenor/strike."""
+        if not hasattr(self, '_models') or not self._models:
+            return 0.0050  # Fallback 50 bps
+            
         key = (expiry, tenor)
         if key in self._models:
             return self._models[key].implied_normal_vol(F, K, expiry)

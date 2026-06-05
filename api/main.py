@@ -24,7 +24,7 @@ import numpy as np
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, Dict, Any
 
 from src.data_ingestion.market_data import (
     get_ois_market_data, get_counterparty_data
@@ -265,3 +265,50 @@ def get_cds_curve(counterparty_name: str):
         "recovery_rate": recovery,
         "curve": summary.round(6).to_dict(orient="records"),
     }
+
+class IncrementalTradeRequest(BaseModel):
+    counterparty: str
+    notional: float
+    fixed_rate: float
+    maturity: float
+    direction: str
+    csa_id: str = "UNCOLLATERALISED"
+
+@app.post("/xva/incremental")
+def xva_incremental(req: IncrementalTradeRequest):
+    from src.workflow.incremental_xva import IncrementalXVAEngine
+    trade = {'TradeID': -1, 'Counterparty': req.counterparty, 'Notional': req.notional,
+             'FixedRate': req.fixed_rate, 'Maturity': req.maturity,
+             'Direction': req.direction, 'CSA_ID': req.csa_id}
+    return IncrementalXVAEngine().impact_report(trade).to_dict('records')
+
+
+class TradeWorkflowRequest(BaseModel):
+    trade: Dict[str, Any]
+    base_metrics: Dict[str, Any]
+    base_limits: Dict[str, Dict[str, float]]
+
+@app.post("/workflow/approve")
+def approve_trade(req: TradeWorkflowRequest):
+    try:
+        from src.workflow.trade_approval import TradeApprovalWorkflow
+        from src.limits.limit_engine import LimitEngine
+        from src.raroc.raroc_engine import RAROCEngine
+        from src.workflow.incremental_xva import IncrementalXVAEngine
+        from src.workflow.portfolio_xva import PortfolioXVAContext
+        from src.data_ingestion.portfolio_manager import PortfolioManager
+        
+        ctx = PortfolioXVAContext(n_paths=500)
+        xva_eng = IncrementalXVAEngine(ctx)
+        lim_eng = LimitEngine([]) # Ideally fetch actual limits from DB here
+        raroc_eng = RAROCEngine(hurdle_rate=0.10)
+        
+        wf = TradeApprovalWorkflow(lim_eng, raroc_eng, xva_eng)
+        
+        # Load base portfolio for incremental impact
+        base_portfolio = PortfolioManager.load_portfolio().to_dict('records')
+        
+        res = wf.evaluate_trade(req.trade, base_portfolio, req.base_metrics, req.base_limits)
+        return res
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

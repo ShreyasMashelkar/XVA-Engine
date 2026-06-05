@@ -16,6 +16,7 @@ import numpy as np
 
 from src.data_ingestion.market_data import get_ois_market_data
 from src.curves.ois_curve import OISCurve
+from src.curves.multi_curve import MultiCurveFramework
 from src.montecarlo.hull_white import HullWhite1F, calibrate_hw1f
 from src.data_ingestion.market_data import get_historical_mibor
 from src.data_ingestion.portfolio_manager import PortfolioManager
@@ -56,6 +57,7 @@ class EODRiskEngine:
         ois_data = get_ois_market_data()
         ois_curve = OISCurve(ois_data['tenor_years'].values,
                              ois_data['ois_rate'].values)
+        mcf = MultiCurveFramework.build_from_market_data()
 
         # ── 2. Calibrate HW1F ─────────────────────────────────────────────────
         mibor_history = get_historical_mibor(n_days=504)
@@ -72,7 +74,7 @@ class EODRiskEngine:
 
         # ── 4. Netting + Collateral ────────────────────────────────────────────
         netting = NettingEngine(time_grid, rate_paths, hw_model)
-        trade_mtm_paths = netting.calculate_trade_mtm_paths(self.trades)
+        trade_mtm_paths = netting.calculate_trade_mtm_paths(self.trades, projection_curve=mcf.mibor)
         current_mtms = {tid: float(paths[:, 0].mean())
                         for tid, paths in trade_mtm_paths.items()}
 
@@ -272,6 +274,7 @@ class EODRiskEngine:
                 'EAD_CR': round(ead, 4),
                 'RWA_CR': round(rwa, 4),
                 'Capital_CR': round(capital, 4),
+                'Basis_BPS': round(mcf.basis_bps, 2),
                 'XVA_Total_CR': round(
                     bilateral['CVA'] + fva_result['FVA'] + kva_result['KVA'] + mva_val, 4
                 ),

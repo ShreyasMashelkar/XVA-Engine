@@ -26,7 +26,9 @@ class FVAEngineV2:
     def compute_fva_pathwise(self,
                              time_grid: np.ndarray,
                              npv_paths: np.ndarray,
-                             discount_factors: np.ndarray) -> dict:
+                             discount_factors: np.ndarray,
+                             bank_survival_curve=None,
+                             cpty_survival_curve=None) -> dict:
         """
         Compute FVA by integrating the funding cost over each path, then averaging.
 
@@ -41,12 +43,26 @@ class FVAEngineV2:
             time_grid: 1D array of simulation time steps.
             npv_paths: 2D array (n_paths, n_steps) of net NPV per path.
             discount_factors: 1D array of OIS discount factors for time_grid.
+            bank_survival_curve: Optional CreditCurve for bank survival probability.
+            cpty_survival_curve: Optional CreditCurve for cpty survival probability.
 
         Returns:
             dict containing FVA, FCA (Cost), and FBA (Benefit)
         """
         n_paths, n_steps = npv_paths.shape
         dt = np.diff(time_grid, prepend=0.0)
+
+        w = np.ones(n_steps)
+        if bank_survival_curve is not None:
+            if hasattr(bank_survival_curve, 'survival_probability_array'):
+                w *= bank_survival_curve.survival_probability_array(time_grid)
+            else:
+                w *= np.array([bank_survival_curve.survival_probability(t) for t in time_grid])
+        if cpty_survival_curve is not None:
+            if hasattr(cpty_survival_curve, 'survival_probability_array'):
+                w *= cpty_survival_curve.survival_probability_array(time_grid)
+            else:
+                w *= np.array([cpty_survival_curve.survival_probability(t) for t in time_grid])
 
         # We need the funding exposure per path, per step
         # If NPV > 0 (we are owed money), we must fund this -> Borrow at fs_borrow
@@ -56,12 +72,12 @@ class FVAEngineV2:
         npv_negative = np.minimum(npv_paths, 0.0)  # These are negative numbers
 
         # Pathwise Cost (FCA) and Benefit (FBA)
-        # FCA = sum( NPV+ * spread_borrow * dt * DF ) across time, averaged over paths
-        fca_paths = np.sum(npv_positive * self.fs_borrow * dt * discount_factors, axis=1)
+        # FCA = sum( NPV+ * spread_borrow * dt * DF * w ) across time, averaged over paths
+        fca_paths = np.sum(npv_positive * self.fs_borrow * dt * discount_factors * w, axis=1)
         fca = float(np.mean(fca_paths))
 
-        # FBA = sum( |NPV-| * spread_lend * dt * DF )
-        fba_paths = np.sum(np.abs(npv_negative) * self.fs_lend * dt * discount_factors, axis=1)
+        # FBA = sum( |NPV-| * spread_lend * dt * DF * w )
+        fba_paths = np.sum(np.abs(npv_negative) * self.fs_lend * dt * discount_factors * w, axis=1)
         fba = float(np.mean(fba_paths))
 
         # FVA = FCA - FBA (Cost - Benefit)

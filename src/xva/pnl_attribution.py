@@ -179,32 +179,31 @@ class SwapPnLAttribution:
         """
         Build a sequence of daily OIS curves from free market data.
 
-        Uses today's FIMMDA curve and generates realistic daily moves
-        calibrated to historical MIBOR volatility from RBI DBIE [FREE].
-
-        The daily move scale is estimated from actual DBIE history —
-        not an arbitrary sigma. The direction is randomized (for testing).
+        Uses today's FIMMDA curve and replays historical daily moves
+        calibrated to actual MIBOR history from RBI DBIE [FREE].
         """
         from src.data_ingestion.market_data import get_ois_market_data, get_historical_mibor
         from src.curves.ois_curve import OISCurve
 
         ois_df = get_ois_market_data()
-        mibor_df = get_historical_mibor(n_days=252)
+        mibor_df = get_historical_mibor(n_days=max(252, n_days + 1))
 
-        # Real daily vol from DBIE history
-        daily_vol = float(np.std(np.diff(mibor_df['mibor_rate'].values)))
+        # Replay historical daily MIBOR shifts
+        mibor_df = mibor_df.sort_values('date').reset_index(drop=True)
+        rates = mibor_df['mibor_rate'].values
+        shifts = np.diff(rates)[-n_days:]
 
         curves = []
         tenors = ois_df['tenor_years'].values
-        rates_base = ois_df['ois_rate'].values.copy()
+        current_rates = ois_df['ois_rate'].values.copy()
 
-        rng = np.random.default_rng(42)
-        current_rates = rates_base.copy()
-
-        for _ in range(n_days):
+        for shift in shifts:
             curves.append(OISCurve(tenors, current_rates.copy()))
-            # Apply realistic daily move (correlated across tenors)
-            shock = rng.normal(0, daily_vol, size=len(tenors))
-            current_rates = np.maximum(current_rates + shock, 0.01)
+            # Parallel shift by historical mibor change
+            current_rates = np.maximum(current_rates + shift, 0.001)
+            
+        # Pad if we didn't have enough history
+        while len(curves) < n_days:
+            curves.append(OISCurve(tenors, current_rates.copy()))
 
         return curves

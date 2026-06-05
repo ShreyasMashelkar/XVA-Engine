@@ -260,26 +260,146 @@ class CVAEngine:
             'Bilateral_CVA': cva - dva,
         }
 
-    def cva_sensitivity(self, ee_profile: np.ndarray,
+    def cva_sensitivity(self,
+                        ee_profile: np.ndarray,
                         time_grid: np.ndarray,
-                        credit_curve: CreditCurve,
+                        credit_curve: 'CreditCurve',
                         shock_bps: float = 1.0) -> float:
         """
-        CVA sensitivity to a 1bp parallel shift in CDS spread.
+        CVA sensitivity to a 1bp parallel shift in CDS spread (alias for cs01).
 
         Args:
-            ee_profile: EE profile.
-            time_grid: Time grid.
+            ee_profile:   EE profile.
+            time_grid:    Time grid.
             credit_curve: Base credit curve.
-            shock_bps: Spread bump size in bps.
+            shock_bps:    Spread bump size in bps.
 
         Returns:
             Change in CVA for a 1bp spread widening (₹ Cr).
         """
-        cva_base = self.compute_cva(ee_profile, time_grid, credit_curve)
-        shifted = credit_curve.shift(shock_bps)
-        cva_shocked = self.compute_cva(ee_profile, time_grid, shifted)
-        return cva_shocked - cva_base
+        cva_base  = self.compute_cva(ee_profile, time_grid, credit_curve)
+        shifted   = credit_curve.shift(shock_bps)
+        cva_shock = self.compute_cva(ee_profile, time_grid, shifted)
+        return cva_shock - cva_base
+
+    def cs01(self,
+             ee_profile: np.ndarray,
+             time_grid: np.ndarray,
+             credit_curve: 'CreditCurve',
+             bump_bps: float = 1.0) -> float:
+        """
+        CS01: Change in CVA for a 1bp widening in CDS spread.
+
+        CS01 = CVA(s + 1bp) - CVA(s)
+
+        Positive CS01 means CVA increases when spreads widen — the
+        primary credit hedge ratio used by CVA desks.
+
+        Args:
+            ee_profile:   Expected Exposure profile.
+            time_grid:    Time grid.
+            credit_curve: Counterparty credit curve.
+            bump_bps:     Bump size in bps (default 1bp).
+
+        Returns:
+            CS01 in ₹ Crores per basis point.
+        """
+        return self.cva_sensitivity(ee_profile, time_grid, credit_curve, bump_bps)
+
+    def ir01(self,
+             ee_profile: np.ndarray,
+             time_grid: np.ndarray,
+             credit_curve: 'CreditCurve',
+             bump_bps: float = 1.0) -> float:
+        """
+        IR01: Change in CVA for a 1bp parallel shift in the OIS curve.
+
+        When rates rise, discount factors fall, reducing PV of future
+        expected losses → CVA decreases → IR01 is typically negative.
+
+        This is the discount-factor IR01 only (standard CVA desk reportable).
+        Full IR01 including EE re-simulation is not computed here.
+
+        Args:
+            ee_profile:   Expected Exposure profile.
+            time_grid:    Time grid.
+            credit_curve: Counterparty credit curve.
+            bump_bps:     Bump size in bps (default 1bp).
+
+        Returns:
+            IR01 in ₹ Crores per basis point.
+        """
+        cva_base    = self.compute_cva(ee_profile, time_grid, credit_curve)
+        bumped_ois  = OISCurve(
+            self.ois_curve.tenors,
+            self.ois_curve.rates + bump_bps / 10000.0
+        )
+        cva_bumped  = CVAEngine(bumped_ois).compute_cva(
+            ee_profile, time_grid, credit_curve
+        )
+        return (cva_bumped - cva_base) / bump_bps
+
+    def cva_sensitivity_grid(self,
+                              ee_profile: np.ndarray,
+                              ene_profile: np.ndarray,
+                              time_grid: np.ndarray,
+                              credit_curve: 'CreditCurve',
+                              own_curve: 'CreditCurve') -> dict:
+        """
+        Full CVA/DVA sensitivity grid for daily CCR desk risk reporting.
+
+        Returns a complete risk pack:
+            CVA, DVA, Bilateral_CVA
+            CS01_CVA:  CVA per 1bp counterparty spread widening
+            CS01_DVA:  DVA per 1bp own spread widening
+            IR01_CVA:  CVA per 1bp rate rise (discount only)
+            IR01_DVA:  DVA per 1bp rate rise (discount only)
+            CDS_Gamma: Second-order credit sensitivity (₹ Cr/bp²)
+
+        Args:
+            ee_profile:   Expected Exposure profile.
+            ene_profile:  Expected Negative Exposure profile.
+            time_grid:    Time grid.
+            credit_curve: Counterparty credit curve.
+            own_curve:    Bank's own credit curve (for DVA).
+
+        Returns:
+            Dictionary of risk sensitivities in ₹ Cr/bp.
+        """
+        bilateral = self.compute_bilateral_cva(
+            ee_profile, ene_profile, time_grid, credit_curve, own_curve
+        )
+
+        cs01_cva = self.cs01(ee_profile, time_grid, credit_curve)
+
+        # CS01 on DVA (own spread)
+        dva_base    = self.compute_cva(-ene_profile, time_grid, own_curve)
+        dva_bumped  = self.compute_cva(-ene_profile, time_grid, own_curve.shift(1.0))
+        cs01_dva    = dva_bumped - dva_base
+
+        ir01_cva = self.ir01(ee_profile, time_grid, credit_curve)
+
+        # IR01 on DVA
+        bumped_ois = OISCurve(self.ois_curve.tenors,
+                               self.ois_curve.rates + 1.0/10000.0)
+        ir01_dva = (CVAEngine(bumped_ois).compute_cva(-ene_profile, time_grid, own_curve)
+                    - self.compute_cva(-ene_profile, time_grid, own_curve))
+
+        # CDS Gamma: second-order sensitivity
+        cva_up    = self.compute_cva(ee_profile, time_grid, credit_curve.shift(1.0))
+        cva_dn    = self.compute_cva(ee_profile, time_grid, credit_curve.shift(-1.0))
+        cds_gamma = cva_up - 2*bilateral['CVA'] + cva_dn
+
+        return {
+            'CVA':           bilateral['CVA'],
+            'DVA':           bilateral['DVA'],
+            'Bilateral_CVA': bilateral['Bilateral_CVA'],
+            'CS01_CVA':      cs01_cva,
+            'CS01_DVA':      cs01_dva,
+            'IR01_CVA':      ir01_cva,
+            'IR01_DVA':      ir01_dva,
+            'CDS_Gamma':     cds_gamma,
+        }
 
 
 def compute_portfolio_cva(exposure_metrics: Dict,
