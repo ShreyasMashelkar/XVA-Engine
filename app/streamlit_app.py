@@ -332,7 +332,8 @@ PAGES = {
     },
     "CAPITAL & REG": {
         "fkey": "F5",
-        "pages": ["Regulatory Capital Analytics", "FRTB-CVA Capital", "Capital & RAROC Analytics"]
+        "pages": ["Regulatory Capital Analytics", "FRTB-CVA Capital", "BA-CVA Capital",
+                  "Capital & RAROC Analytics"]
     },
     "STRESS": {
         "fkey": "F6",
@@ -340,11 +341,16 @@ PAGES = {
     },
     "MODEL RISK": {
         "fkey": "F7",
-        "pages": ["Model Risk & Validation"]
+        "pages": ["Model Risk & Validation", "Exposure Backtesting"]
     },
     "INFRASTRUCTURE": {
         "fkey": "F8",
         "pages": ["Data & Infrastructure Monitor"]
+    },
+    "ADVANCED QUANT": {
+        "fkey": "F9",
+        "pages": ["AAD Greeks Engine", "Quasi-Monte Carlo", "Bermudan Exposure (LSM)",
+                  "Cross-Currency XVA", "Stochastic WWR", "IFRS-13 Accounting"]
     },
 }
 
@@ -370,7 +376,15 @@ _PAGE_LABELS = {
     "PnL Explain":                   "PNL EXPLAIN",
     "Regulatory Capital Analytics":  "SA-CCR / RWA",
     "FRTB-CVA Capital":              "FRTB-CVA SA",
+    "BA-CVA Capital":                "BA-CVA BASIC",
     "Capital & RAROC Analytics":     "CAPITAL / RAROC",
+    "Exposure Backtesting":          "EXPOSURE BACKTEST",
+    "AAD Greeks Engine":             "AAD GREEKS",
+    "Quasi-Monte Carlo":             "QUASI-MC (SOBOL)",
+    "Bermudan Exposure (LSM)":       "BERMUDAN / LSM",
+    "Cross-Currency XVA":            "CROSS-CCY XVA",
+    "Stochastic WWR":                "STOCHASTIC WWR",
+    "IFRS-13 Accounting":            "IFRS-13 XVA",
     "Stress & Scenario Analysis":    "STRESS TESTING",
     "Model Risk & Validation":       "MODEL VALIDATION",
     "Data & Infrastructure Monitor": "INFRA MONITOR",
@@ -2330,3 +2344,431 @@ elif page == "CSA CTD Optionality":
     _apply_bbg_chart(figc, 'NET CARRY COST BY ELIGIBLE COLLATERAL (LOWEST = CTD)')
     figc.update_yaxes(title_text='NET CARRY (BPS)')
     st.plotly_chart(figc, use_container_width=True)
+
+
+# ═════════════════════════════════════════════════════════════
+# ADVANCED QUANT PAGES (AAD, QMC, LSM, FX-XVA, stochastic WWR,
+#                       BA-CVA, exposure backtest, IFRS-13)
+# ═════════════════════════════════════════════════════════════
+elif page == "AAD Greeks Engine":
+    st.markdown("# AAD Greeks Engine")
+    st.markdown("<div style='color:#8899aa;font-size:0.72rem;margin-bottom:8px'>"
+                "ADJOINT ALGORITHMIC DIFFERENTIATION — FULL CVA GREEK VECTOR IN ONE REVERSE SWEEP</div>",
+                unsafe_allow_html=True)
+    export_strip()
+
+    from src.xva.aad_greeks import AADCVAEngine
+
+    section_header("AAD vs BUMP-AND-REVALUE",
+                   "AAD computes the entire gradient (CS01, IR01, recovery, and every exposure-bucket "
+                   "delta) in ~1 valuation; bump-and-revalue needs one revaluation per sensitivity.")
+    aad = AADCVAEngine(ois_curve)
+    out = aad.cva_and_greeks(metrics['EE'], time_grid, credit_curve)
+    bm = aad.benchmark_vs_bump(metrics['EE'], time_grid, credit_curve, n_reps=40)
+
+    cols = st.columns(4)
+    cols[0].metric("CVA", f"₹{out['CVA']:.4f} CR", accent="red")
+    cols[1].metric("SENSITIVITIES / SWEEP", str(out['n_sensitivities']), accent="green")
+    cols[2].metric("AAD REVALUATIONS", str(bm['aad_revaluations']), accent="blue")
+    cols[3].metric("BUMP REVALUATIONS", str(bm['bump_revaluations']), accent="amber")
+
+    c2 = st.columns(4)
+    c2[0].metric("CS01 (AAD)", f"₹{out['CS01']:.6f}/bp", accent="amber")
+    c2[1].metric("IR01 (AAD)", f"₹{out['IR01']:.6f}/bp", accent="blue")
+    c2[2].metric("RECOVERY01", f"₹{out['Recovery01']:.6f}/%", accent="green")
+    c2[3].metric("MAX GREEK ERR vs BUMP", f"{bm['EE_delta_max_abs_err']:.1e}", accent="green")
+
+    section_header("EXPOSURE-BUCKET GREEKS (dCVA / dEE_i) — ALL FROM ONE SWEEP")
+    figg = go.Figure()
+    figg.add_trace(go.Bar(x=time_grid, y=out['EE_deltas'], marker=dict(color=COLORS['EE']),
+                          hovertemplate='t=%{x:.2f}Y<br>dCVA/dEE=%{y:.5f}<extra></extra>'))
+    _apply_bbg_chart(figg, 'CVA SENSITIVITY TO EACH EXPOSURE NODE')
+    figg.update_xaxes(title_text='TIME (YEARS)')
+    figg.update_yaxes(title_text='dCVA / dEE_i')
+    st.plotly_chart(figg, use_container_width=True)
+
+    st.markdown(f"<div class='assumptions-panel'><div class='ap-title'>WHY THIS MATTERS</div>"
+                f"<div style='font-size:0.7rem;color:#8899aa;line-height:1.5'>"
+                f"On this {len(time_grid)}-node grid, AAD returns {out['n_sensitivities']} exact "
+                f"sensitivities from a single reverse sweep, versus {bm['bump_revaluations']} full "
+                f"revaluations for bump-and-revalue — and the agreement is "
+                f"{bm['EE_delta_max_abs_err']:.1e}. This is the technique every Tier-1 bank uses for "
+                f"real-time XVA Greeks. Engine: self-contained reverse-mode autodiff (pure NumPy, no "
+                f"JAX/PyTorch).</div></div>", unsafe_allow_html=True)
+
+
+elif page == "Quasi-Monte Carlo":
+    st.markdown("# Quasi-Monte Carlo")
+    st.markdown("<div style='color:#8899aa;font-size:0.72rem;margin-bottom:8px'>"
+                "SOBOL LOW-DISCREPANCY SEQUENCES + BROWNIAN BRIDGE — VARIANCE REDUCTION</div>",
+                unsafe_allow_html=True)
+    export_strip()
+
+    from src.montecarlo.quasi_mc import convergence_demo
+
+    section_header("MC vs QMC CONVERGENCE (vs ANALYTIC TRUTH)",
+                   "ATM Bachelier swaption priced by pseudo-random MC and Sobol QMC at rising path "
+                   "counts, compared to the exact closed-form price.")
+    demo = convergence_demo(path_counts=(256, 512, 1024, 2048, 4096, 8192))
+    st.metric("ANALYTIC PRICE", f"₹{demo['analytic']:.4f} CR", accent="green")
+
+    rows = demo['rows']
+    rrows = ""
+    for r in rows:
+        better = r['qmc_abs_err'] < r['mc_abs_err']
+        rrows += (f"<tr><td>{r['n_paths']:,}</td>"
+                  f"<td>₹{r['mc_price']:.4f}</td><td>₹{r['qmc_price']:.4f}</td>"
+                  f"<td class='num-neg'>{r['mc_abs_err']:.5f}</td>"
+                  f"<td class='{'num-pos' if better else 'num-warn'}'>{r['qmc_abs_err']:.5f}</td></tr>")
+    st.markdown(f"<div class='bbg-table-wrap'><table class='bbg-table'><thead><tr>"
+                f"<th>N PATHS</th><th>MC PRICE</th><th>QMC PRICE</th>"
+                f"<th>MC ABS ERR</th><th>QMC ABS ERR</th>"
+                f"</tr></thead><tbody>{rrows}</tbody></table></div>", unsafe_allow_html=True)
+
+    figq = go.Figure()
+    figq.add_trace(go.Scatter(x=[r['n_paths'] for r in rows], y=[r['mc_abs_err'] for r in rows],
+                              name='MC ERROR', mode='lines+markers',
+                              line=dict(color=COLORS['PFE'], width=2.5),
+                              hovertemplate='N=%{x}<br>err=%{y:.5f}<extra></extra>'))
+    figq.add_trace(go.Scatter(x=[r['n_paths'] for r in rows], y=[r['qmc_abs_err'] for r in rows],
+                              name='QMC (SOBOL) ERROR', mode='lines+markers',
+                              line=dict(color=COLORS['ENE'], width=2.5),
+                              hovertemplate='N=%{x}<br>err=%{y:.5f}<extra></extra>'))
+    _apply_bbg_chart(figq, 'PRICING ERROR vs PATH COUNT (LOG-LOG)')
+    figq.update_xaxes(title_text='PATHS', type='log')
+    figq.update_yaxes(title_text='ABS ERROR (₹ CR)', type='log')
+    st.plotly_chart(figq, use_container_width=True)
+
+
+elif page == "Bermudan Exposure (LSM)":
+    st.markdown("# Bermudan Exposure (LSM)")
+    st.markdown("<div style='color:#8899aa;font-size:0.72rem;margin-bottom:8px'>"
+                "LONGSTAFF-SCHWARTZ — CALLABLE / BERMUDAN SWAPTION EXPOSURE WITH EARLY EXERCISE</div>",
+                unsafe_allow_html=True)
+    export_strip()
+
+    from src.montecarlo.longstaff_schwartz import BermudanSwaptionLSM
+
+    section_header("BERMUDAN SWAPTION SETUP")
+    bc = st.columns(3)
+    b_strike = bc[0].number_input("STRIKE (%)", value=7.0, step=0.1) / 100
+    b_optn = bc[1].selectbox("TYPE", ["Payer", "Receiver"])
+    b_sigma = bc[2].slider("HW1F σ", 0.005, 0.025, 0.012, 0.001)
+    ex_dates = [float(y) for y in range(2, int(maturity)) if y < maturity] or [max(1.0, maturity - 1)]
+
+    berm = BermudanSwaptionLSM(ois_curve, notional, b_strike, ex_dates, float(maturity),
+                               payer=(b_optn == "Payer"), a=mean_rev, sigma=b_sigma)
+    with st.spinner("RUNNING LONGSTAFF-SCHWARTZ..."):
+        r = berm.price_and_exposure(n_paths=int(min(n_paths, 6000)), n_steps_per_year=4, seed=42)
+
+    section_header("PRICING & EARLY-EXERCISE")
+    bcc = st.columns(4)
+    bcc[0].metric("BERMUDAN PV", f"₹{r['price']:.4f} CR", accent="green")
+    bcc[1].metric("EUROPEAN REF", f"₹{r['european_ref']:.4f} CR", accent="amber")
+    bcc[2].metric("EARLY-EX PREMIUM", f"₹{r['price']-r['european_ref']:.4f} CR", accent="blue")
+    bcc[3].metric("EXERCISE FRACTION", f"{r['exercise_fraction']*100:.1f}%", accent="amber")
+
+    section_header("CALLABLE EXPOSURE PROFILE")
+    figb = go.Figure()
+    figb.add_trace(go.Scatter(x=r['time_grid'], y=r['PFE'], name='PFE 95%', mode='lines',
+                              line=dict(color=COLORS['PFE'], width=2),
+                              hovertemplate='PFE: ₹%{y:.4f} Cr<extra></extra>'))
+    figb.add_trace(go.Scatter(x=r['time_grid'], y=r['EE'], name='EE', mode='lines',
+                              line=dict(color=COLORS['EE'], width=2.5), fill='tozeroy',
+                              fillcolor='rgba(0,170,255,0.06)',
+                              hovertemplate='EE: ₹%{y:.4f} Cr<extra></extra>'))
+    for ed in ex_dates:
+        figb.add_vline(x=ed, line_dash='dot', line_color='#556677',
+                       annotation_text=f'EX {ed:.0f}Y', annotation_font=dict(color='#8899aa', size=8))
+    _apply_bbg_chart(figb, 'BERMUDAN EXPOSURE (EARLY EXERCISE COLLAPSES TAIL)')
+    figb.update_layout(hovermode='x unified')
+    figb.update_xaxes(title_text='TIME (YEARS)')
+    figb.update_yaxes(title_text='EXPOSURE (₹ CR)')
+    st.plotly_chart(figb, use_container_width=True)
+
+
+elif page == "Cross-Currency XVA":
+    st.markdown("# Cross-Currency XVA")
+    st.markdown("<div style='color:#8899aa;font-size:0.72rem;margin-bottom:8px'>"
+                "3-FACTOR (INR IR / USD IR / USD-INR FX) CROSS-CURRENCY SWAP EXPOSURE</div>",
+                unsafe_allow_html=True)
+    export_strip()
+
+    from src.montecarlo.cross_currency import CrossCurrencySwapModel
+
+    section_header("MODEL INPUTS")
+    xc = st.columns(4)
+    usd_rate = xc[0].slider("USD RATE (%)", 3.0, 7.0, 5.3, 0.1) / 100
+    fx0 = xc[1].number_input("USD/INR SPOT", value=84.0, step=0.5)
+    fxvol = xc[2].slider("USD/INR VOL (%)", 2.0, 12.0, 5.0, 0.5) / 100
+    for_fixed = xc[3].number_input("USD FIXED (%)", value=4.5, step=0.1) / 100
+
+    m = CrossCurrencySwapModel(ois_curve, for_rate=usd_rate, fx_spot=fx0, fx_vol=fxvol)
+    tg = np.linspace(0, float(maturity), 61)
+    with st.spinner("SIMULATING 3-FACTOR DYNAMICS..."):
+        sim = m.simulate(int(min(n_paths, 5000)), tg, seed=42)
+        mtm = m.swap_mtm_paths(sim, notional, fixed_rate, for_fixed, float(maturity))
+        em = m.exposure_metrics(mtm, tg)
+
+    section_header("CCS EXPOSURE (₹ CR)")
+    xcc = st.columns(4)
+    xcc[0].metric("EPE", f"₹{em['EPE']:.3f} CR", accent="blue")
+    xcc[1].metric("MAX EE", f"₹{np.max(em['EE']):.3f} CR", accent="amber")
+    xcc[2].metric("MAX PFE 95%", f"₹{np.max(em['PFE']):.3f} CR", accent="red")
+    xcc[3].metric("FX TERMINAL (MEAN)", f"{sim['FX'][:,-1].mean():.2f}", accent="green")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        section_header("EXPOSURE PROFILE")
+        figx = go.Figure()
+        figx.add_trace(go.Scatter(x=tg, y=em['PFE'], name='PFE 95%', mode='lines',
+                                  line=dict(color=COLORS['PFE'], width=2),
+                                  hovertemplate='PFE: ₹%{y:.3f} Cr<extra></extra>'))
+        figx.add_trace(go.Scatter(x=tg, y=em['EE'], name='EE', mode='lines',
+                                  line=dict(color=COLORS['EE'], width=2.5), fill='tozeroy',
+                                  fillcolor='rgba(0,170,255,0.06)',
+                                  hovertemplate='EE: ₹%{y:.3f} Cr<extra></extra>'))
+        _apply_bbg_chart(figx, 'CCS EXPOSURE — PFE PEAKS AT NOTIONAL EXCHANGE')
+        figx.update_xaxes(title_text='TIME (YEARS)')
+        figx.update_yaxes(title_text='EXPOSURE (₹ CR)')
+        st.plotly_chart(figx, use_container_width=True)
+    with col2:
+        section_header("SIMULATED USD/INR FX PATHS")
+        figf = go.Figure()
+        for i in range(min(100, sim['FX'].shape[0])):
+            figf.add_trace(go.Scatter(x=tg, y=sim['FX'][i], mode='lines',
+                                      line=dict(color=COLORS['EPE'], width=0.4),
+                                      opacity=0.08, showlegend=False))
+        figf.add_trace(go.Scatter(x=tg, y=sim['FX'].mean(0), name='MEAN FX', mode='lines',
+                                  line=dict(color=COLORS['ENE'], width=2.5),
+                                  hovertemplate='FX: %{y:.2f}<extra></extra>'))
+        _apply_bbg_chart(figf, 'USD/INR PATHS (CARRY DRIFT = r_d - r_f)')
+        figf.update_xaxes(title_text='TIME (YEARS)')
+        figf.update_yaxes(title_text='USD/INR')
+        st.plotly_chart(figf, use_container_width=True)
+
+
+elif page == "Stochastic WWR":
+    st.markdown("# Stochastic WWR")
+    st.markdown("<div style='color:#8899aa;font-size:0.72rem;margin-bottom:8px'>"
+                "COX PROCESS — CIR DEFAULT INTENSITY CORRELATED WITH RATES (DYNAMIC WRONG-WAY RISK)</div>",
+                unsafe_allow_html=True)
+    export_strip()
+
+    from src.wwr.stochastic_intensity_wwr import StochasticIntensityWWR
+
+    section_header("MODEL INPUTS")
+    sc = st.columns(4)
+    rho_w = sc[0].slider("RATE-INTENSITY CORR (ρ)", -0.8, 0.8, 0.5, 0.1)
+    theta = sc[1].slider("LONG-RUN INTENSITY θ", 0.01, 0.10, 0.03, 0.005)
+    xi = sc[2].slider("INTENSITY VOL ξ", 0.02, 0.20, 0.08, 0.01)
+    w_optn = sc[3].selectbox("SWAP TYPE", ["Payer", "Receiver"])
+
+    w = StochasticIntensityWWR(ois_curve, kappa=0.5, theta=theta, xi=xi, recovery=0.40)
+    with st.spinner("SIMULATING CORRELATED RATE + INTENSITY..."):
+        res = w.wwr_multiplier(notional, fixed_rate, float(maturity), rho=rho_w,
+                               payer=(w_optn == "Payer"), n_paths=int(min(n_paths, 8000)), seed=7)
+
+    section_header("WWR-CVA RESULT")
+    wc = st.columns(4)
+    wc[0].metric("CVA (WWR)", f"₹{res['CVA_wwr']:.4f} CR", accent="red")
+    wc[1].metric("CVA (INDEP)", f"₹{res['CVA_independent']:.4f} CR", accent="amber")
+    wc[2].metric("WWR MULTIPLIER", f"{res['wwr_multiplier']:.3f}×",
+                 accent=("red" if res['wwr_multiplier'] > 1 else "green"))
+    wc[3].metric("DEFAULT PROB", f"{res['default_prob']*100:.1f}%", accent="blue")
+
+    direction_note = ("WRONG-WAY: exposure and default rise together — CVA inflated."
+                      if res['wwr_multiplier'] > 1 else
+                      "RIGHT-WAY: exposure falls as default rises — CVA reduced.")
+    st.markdown(f"<div class='assumptions-panel'><div class='ap-title'>INTERPRETATION (ρ={rho_w:+.1f})</div>"
+                f"<div style='font-size:0.7rem;color:#8899aa;line-height:1.5'>{direction_note} "
+                f"The multiplier comes from the *dynamics* (correlated CIR intensity), not a static "
+                f"correlation fudge — the marginal default probability is held fixed.</div></div>",
+                unsafe_allow_html=True)
+
+    section_header("EXPOSURE PROFILE")
+    figw = go.Figure()
+    figw.add_trace(go.Scatter(x=res['time_grid'], y=res['PFE'], name='PFE 95%', mode='lines',
+                              line=dict(color=COLORS['PFE'], width=2),
+                              hovertemplate='PFE: ₹%{y:.4f} Cr<extra></extra>'))
+    figw.add_trace(go.Scatter(x=res['time_grid'], y=res['EE'], name='EE', mode='lines',
+                              line=dict(color=COLORS['EE'], width=2.5), fill='tozeroy',
+                              fillcolor='rgba(0,170,255,0.06)',
+                              hovertemplate='EE: ₹%{y:.4f} Cr<extra></extra>'))
+    _apply_bbg_chart(figw, 'SWAP EXPOSURE DRIVING THE WWR-CVA')
+    figw.update_xaxes(title_text='TIME (YEARS)')
+    figw.update_yaxes(title_text='EXPOSURE (₹ CR)')
+    st.plotly_chart(figw, use_container_width=True)
+
+
+elif page == "BA-CVA Capital":
+    st.markdown("# BA-CVA Capital")
+    st.markdown("<div style='color:#8899aa;font-size:0.72rem;margin-bottom:8px'>"
+                "BASEL BASIC APPROACH CVA — REDUCED & FULL (HEDGED) — BIS d424</div>",
+                unsafe_allow_html=True)
+    export_strip()
+
+    from src.sa_ccr.ba_cva import BACVAEngine
+    from src.sa_ccr.regulatory import SACCRCalculator
+
+    section_header("PORTFOLIO EAD & MATURITY (FROM SA-CCR)")
+    saccr = SACCRCalculator()
+    cptys_ba = []
+    for _, row in counterparties.iterrows():
+        addon = saccr.compute_trade_addon(notional=notional, maturity=float(maturity), direction=direction)
+        ead = 1.4 * (max(swap.mtm(ois_curve), 0.0) + addon['trade_addon'])
+        sector = 'Financial' if 'Bank' in str(row['entity_type']) or 'NBFC' in str(row['entity_type']) else 'Other'
+        cptys_ba.append({'name': row['counterparty'], 'sector': sector,
+                         'rating': row['rating'], 'ead': ead, 'maturity': float(maturity)})
+
+    beta = st.slider("RECOGNISED HEDGE FRACTION β", 0.0, 0.9, 0.3, 0.05)
+    eng = BACVAEngine()
+    red = eng.compute_reduced(cptys_ba)
+    full = eng.compute_full(cptys_ba, beta=beta)
+
+    section_header("CAPITAL RESULT")
+    bc = st.columns(4)
+    bc[0].metric("K REDUCED", f"₹{red['K_reduced']:.4f} CR", accent="amber")
+    bc[1].metric("K FULL (HEDGED)", f"₹{full['K_full']:.4f} CR", accent="green")
+    bc[2].metric("BA-CVA CAPITAL", f"₹{full['BA_CVA_capital_full_CR']:.4f} CR", accent="red")
+    bc[3].metric("SYSTEMATIC / IDIO", f"{red['systematic_component']:.2f} / {red['idiosyncratic_component']:.2f}",
+                 accent="blue")
+
+    section_header("STANDALONE CVA CAPITAL (SCVA) BY COUNTERPARTY")
+    drows = ""
+    for d in red['details']:
+        drows += (f"<tr><td>{d['name']}</td><td>{d['rw_pct']:.1f}</td>"
+                  f"<td>₹{d['ead']:.3f}</td><td>{d['maturity']:.1f}</td>"
+                  f"<td class='num-warn'>₹{d['scva']:.4f}</td></tr>")
+    st.markdown(f"<div class='bbg-table-wrap'><table class='bbg-table'><thead><tr>"
+                f"<th>COUNTERPARTY</th><th>RW (%)</th><th>EAD (₹CR)</th><th>MATURITY</th>"
+                f"<th>SCVA (₹CR)</th></tr></thead><tbody>{drows}</tbody></table></div>",
+                unsafe_allow_html=True)
+
+    figba = go.Figure()
+    nm = [d['name'] for d in red['details']]; sv = [d['scva'] for d in red['details']]
+    figba.add_trace(go.Bar(x=nm, y=sv, marker=dict(color=COLORS['EPE']),
+                           text=[f'₹{v:.3f}' for v in sv], textposition='outside',
+                           textfont=dict(family=_MONO, color='#e0e0e0', size=9),
+                           hovertemplate='<b>%{x}</b><br>SCVA: ₹%{y:.4f} Cr<extra></extra>'))
+    _apply_bbg_chart(figba, 'STANDALONE CVA CAPITAL CONTRIBUTION')
+    figba.update_yaxes(title_text='SCVA (₹ CR)')
+    st.plotly_chart(figba, use_container_width=True)
+
+
+elif page == "Exposure Backtesting":
+    st.markdown("# Exposure Backtesting")
+    st.markdown("<div style='color:#8899aa;font-size:0.72rem;margin-bottom:8px'>"
+                "IMM MODEL VALIDATION — KUPIEC POF TEST + BASEL TRAFFIC-LIGHT ZONING</div>",
+                unsafe_allow_html=True)
+    export_strip()
+
+    from src.validation.exposure_backtest import ExposureBacktester
+
+    section_header("BACKTEST SETUP")
+    bk = st.columns(3)
+    q_level = bk[0].slider("PFE QUANTILE", 0.90, 0.99, 0.95, 0.01)
+    stress = bk[1].slider("REALISED STRESS FACTOR", 0.8, 2.0, 1.0, 0.1,
+                          help="Scale realised vol; >1 makes the model under-predict")
+    seed_bt = int(bk[2].number_input("SEED", value=7, step=1))
+
+    bt = ExposureBacktester(quantile=q_level)
+    res = bt.backtest_from_simulation(mtm_paths, time_grid, realised_factor=stress, seed=seed_bt)
+    tl = res['traffic_light']; kup = res['kupiec']
+
+    section_header("BACKTEST RESULT")
+    zone_accent = {'GREEN': 'green', 'AMBER': 'amber', 'RED': 'red'}.get(tl['zone'], 'blue')
+    rc = st.columns(4)
+    rc[0].metric("TRAFFIC LIGHT", tl['zone'], accent=zone_accent)
+    rc[1].metric("BREACHES", f"{res['n_breaches']} / {res['n_observations']}", accent="amber")
+    rc[2].metric("CAPITAL MULTIPLIER", f"{tl['capital_multiplier']:.2f}×", accent=zone_accent)
+    rc[3].metric("KUPIEC REJECT H0", "YES" if kup['reject_H0'] else "NO",
+                 accent=("red" if kup['reject_H0'] else "green"))
+
+    rc2 = st.columns(3)
+    rc2[0].metric("BREACH RATE", f"{res['breach_rate']*100:.2f}%", accent="amber")
+    rc2[1].metric("EXPECTED RATE", f"{res['expected_breach_rate']*100:.2f}%", accent="blue")
+    rc2[2].metric("KUPIEC p-VALUE", f"{kup['p_value']:.3f}", accent="blue")
+
+    section_header("PREDICTED PFE vs REALISED EXPOSURE")
+    figbt = go.Figure()
+    figbt.add_trace(go.Scatter(x=res['time_grid'], y=res['predicted_pfe'],
+                               name=f'PREDICTED PFE {q_level:.0%}', mode='lines',
+                               line=dict(color=COLORS['EPE'], width=2.5),
+                               hovertemplate='PFE: ₹%{y:.3f} Cr<extra></extra>'))
+    realised = res['realised']
+    breach_mask = realised > res['predicted_pfe']
+    figbt.add_trace(go.Scatter(x=res['time_grid'], y=realised, name='REALISED', mode='markers',
+                               marker=dict(color=np.where(breach_mask, '#ff3311', '#00aaff'),
+                                           size=5),
+                               hovertemplate='realised: ₹%{y:.3f} Cr<extra></extra>'))
+    _apply_bbg_chart(figbt, 'BACKTEST — RED MARKERS ARE QUANTILE BREACHES')
+    figbt.update_xaxes(title_text='OBSERVATION (TIME)')
+    figbt.update_yaxes(title_text='EXPOSURE (₹ CR)')
+    st.plotly_chart(figbt, use_container_width=True)
+
+
+elif page == "IFRS-13 Accounting":
+    st.markdown("# IFRS-13 Accounting")
+    st.markdown("<div style='color:#8899aa;font-size:0.72rem;margin-bottom:8px'>"
+                "XVA FAIR-VALUE RESERVE & P&L ATTRIBUTION — IFRS 13 FAIR-VALUE MEASUREMENT</div>",
+                unsafe_allow_html=True)
+    export_strip()
+
+    from src.xva.ifrs13 import XVAReserve, IFRS13XVAReporter
+
+    section_header("XVA RESERVE INPUTS (₹ CR)")
+    ic = st.columns(5)
+    in_cva = ic[0].number_input("CVA", value=4.20, step=0.05)
+    in_dva = ic[1].number_input("DVA", value=0.80, step=0.05)
+    in_fva = ic[2].number_input("FVA", value=1.10, step=0.05)
+    in_mva = ic[3].number_input("MVA", value=0.30, step=0.05)
+    in_kva = ic[4].number_input("KVA", value=2.00, step=0.05)
+    incl_kva = st.checkbox("INCLUDE KVA IN FAIR VALUE", value=False)
+
+    rep = IFRS13XVAReporter()
+    curr = XVAReserve(cva=in_cva, dva=in_dva, fva=in_fva, mva=in_mva, kva=in_kva)
+    stmt = rep.fair_value_statement(curr, include_kva=incl_kva)
+
+    section_header("FAIR-VALUE STATEMENT")
+    sc = st.columns(3)
+    sc[0].metric("NET FV ADJUSTMENT", f"₹{stmt['net_fv_adjustment_CR']:.3f} CR", accent="red")
+    sc[1].metric("GROSS XVA RESERVE", f"₹{stmt['gross_xva_reserve_CR']:.3f} CR", accent="amber")
+    sc[2].metric("OWN-CREDIT (DVA) BENEFIT", f"₹{stmt['own_credit_benefit_CR']:.3f} CR", accent="green")
+
+    crows = ""
+    for name, c in stmt['components'].items():
+        sgn = "num-pos" if c['fv_sign'] >= 0 else "num-neg"
+        crows += (f"<tr><td>{name}</td><td>₹{c['amount']:.3f}</td>"
+                  f"<td class='{sgn}'>₹{c['fv_sign']:+.3f}</td>"
+                  f"<td>{c['hierarchy']}</td><td>{c['note']}</td></tr>")
+    st.markdown(f"<div class='bbg-table-wrap'><table class='bbg-table'><thead><tr>"
+                f"<th>COMPONENT</th><th>AMOUNT</th><th>FV IMPACT</th>"
+                f"<th>IFRS-13 LEVEL</th><th>NOTE</th></tr></thead>"
+                f"<tbody>{crows}</tbody></table></div>", unsafe_allow_html=True)
+
+    section_header("DAY-OVER-DAY XVA P&L ATTRIBUTION")
+    pc = st.columns(5)
+    p_cva = pc[0].number_input("Δ CVA → today", value=4.65, step=0.05)
+    p_dva = pc[1].number_input("Δ DVA → today", value=0.70, step=0.05)
+    p_fva = pc[2].number_input("Δ FVA → today", value=1.30, step=0.05)
+    p_mva = pc[3].number_input("Δ MVA → today", value=0.35, step=0.05)
+    p_kva = pc[4].number_input("Δ KVA → today", value=2.10, step=0.05)
+    today = XVAReserve(cva=p_cva, dva=p_dva, fva=p_fva, mva=p_mva, kva=p_kva)
+    pnl = rep.pnl_attribution(curr, today, include_kva=incl_kva)
+
+    st.metric("TOTAL XVA P&L", f"₹{pnl['total_xva_pnl_CR']:+.3f} CR",
+              accent=("green" if pnl['total_xva_pnl_CR'] >= 0 else "red"))
+    effects = list(pnl['lines'].keys()); vals = list(pnl['lines'].values())
+    figp = go.Figure(go.Waterfall(
+        orientation="v", measure=["relative"] * len(effects) + ["total"],
+        x=[e.replace('_pnl', '').upper() for e in effects] + ['TOTAL'],
+        y=vals + [pnl['total_xva_pnl_CR']],
+        text=[f"₹{v:+.3f}" for v in vals + [pnl['total_xva_pnl_CR']]],
+        textposition='outside', textfont=dict(family=_MONO, color='#e0e0e0', size=9),
+        connector={"line": {"color": "#243040"}},
+        increasing={"marker": {"color": COLORS['success']}},
+        decreasing={"marker": {"color": COLORS['danger_bright']}},
+        totals={"marker": {"color": COLORS['EE']}}))
+    _apply_bbg_chart(figp, 'XVA P&L WATERFALL (DAY-OVER-DAY)')
+    st.plotly_chart(figp, use_container_width=True)

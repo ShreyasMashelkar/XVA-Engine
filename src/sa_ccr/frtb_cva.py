@@ -83,6 +83,14 @@ IR_TENOR_CORR = {
 # Correlation between CS and IR risk classes (cross-risk class, BIS §4.30)
 CS_IR_CROSS_CORR = 0.01   # Effectively uncorrelated in SA-CVA
 
+# SA-CVA vega risk weight (BIS FRTB §4.x). Vega RW = 100% of the vega-implied
+# move for interest-rate and credit vol risk classes in the simplified SA-CVA.
+VEGA_RISK_WEIGHT = 1.00
+# Within-bucket vega correlation (single consolidated vega bucket here)
+VEGA_CORR = 0.50
+# Curvature shock size (relative bump to vol for the curvature charge)
+CURVATURE_SHOCK = 0.01
+
 
 def _rating_to_bucket(rating: str) -> str:
     """Map a credit rating string to the standard SA-CVA bucket."""
@@ -280,6 +288,93 @@ class FRTBCVAEngine:
             'K_IR_delta': k_ir,
             'K_total_FRTB_CVA': k_total,
             'FRTB_CVA_Capital_CR': capital_requirement,
+        }
+
+    def compute_vega_capital(self, counterparty_vega: Dict[str, float]) -> Dict[str, float]:
+        """
+        SA-CVA vega delta capital.
+
+        Vega = ΔCVA per 1% (absolute) change in the implied vol used to hedge
+        CVA (e.g. swaption vol). Weighted by the vega risk weight and
+        aggregated with a single-bucket correlation.
+
+        K_vega = sqrt( Σ_i ws_i² + Σ_{i≠j} ρ · ws_i · ws_j ),  ws_i = RW · vega_i
+
+        Args:
+            counterparty_vega: {counterparty: vega in ₹ Cr per vol point}
+
+        Returns:
+            Dict with weighted vegas and K_vega.
+        """
+        names = list(counterparty_vega.keys())
+        ws = {n: VEGA_RISK_WEIGHT * abs(counterparty_vega.get(n, 0.0)) for n in names}
+        variance = 0.0
+        for i, n1 in enumerate(names):
+            for j, n2 in enumerate(names):
+                rho = 1.0 if i == j else VEGA_CORR
+                variance += rho * ws[n1] * ws[n2]
+        return {'K_vega': float(np.sqrt(max(variance, 0.0))),
+                **{f'WS_vega_{n}': ws[n] for n in names}}
+
+    def compute_curvature_capital(self,
+                                  cva_base: float,
+                                  cva_vol_up: float,
+                                  cva_vol_down: float) -> Dict[str, float]:
+        """
+        SA-CVA curvature capital — second-order vol risk.
+
+        Curvature captures the non-linear CVA response to large vol moves
+        that vega (first order) misses:
+            CVR_up   = -(CVA(vol+shock) - CVA - vega·shock)
+            CVR_down = -(CVA(vol-shock) - CVA + vega·shock)
+            K_curv   = max(CVR_up, CVR_down, 0)
+
+        Here we pass in CVA re-valued at ±shock vol and take the worst convex
+        loss (vega term folded into the revaluations).
+
+        Args:
+            cva_base:      CVA at base vol.
+            cva_vol_up:    CVA at vol + shock.
+            cva_vol_down:  CVA at vol - shock.
+
+        Returns:
+            Dict with CVR_up, CVR_down, K_curvature.
+        """
+        cvr_up = -(cva_vol_up - cva_base)
+        cvr_down = -(cva_vol_down - cva_base)
+        k_curv = max(cvr_up, cvr_down, 0.0)
+        return {'CVR_up': float(cvr_up), 'CVR_down': float(cvr_down),
+                'K_curvature': float(k_curv)}
+
+    def compute_total_with_vega_curvature(
+        self,
+        counterparty_cs01: Dict[str, float],
+        ratings: Dict[str, str],
+        counterparty_ir01: Optional[Dict[str, Dict[str, float]]] = None,
+        counterparty_vega: Optional[Dict[str, float]] = None,
+        curvature: Optional[Dict[str, float]] = None,
+    ) -> Dict[str, float]:
+        """
+        Full SA-CVA capital = delta (CS+IR) ⊕ vega ⊕ curvature.
+
+        Risk classes are combined by simple aggregation (square-root of sum of
+        squares) as a conservative consolidation of the three charges.
+        """
+        delta = self.compute_sa_cva_capital(counterparty_cs01, ratings, counterparty_ir01)
+        k_delta = delta['K_total_FRTB_CVA']
+
+        vega = self.compute_vega_capital(counterparty_vega or {})
+        k_vega = vega['K_vega']
+
+        k_curv = float(curvature.get('K_curvature', 0.0)) if curvature else 0.0
+
+        k_total = np.sqrt(k_delta ** 2 + k_vega ** 2 + k_curv ** 2)
+        return {
+            **delta,
+            'K_vega': k_vega,
+            'K_curvature': k_curv,
+            'K_SA_CVA_total': float(k_total),
+            'SA_CVA_capital_total_CR': float(k_total * self.capital_ratio),
         }
 
     def compute_from_eod_report(
