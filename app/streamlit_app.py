@@ -1,6 +1,6 @@
 """
 INR OTC Derivatives Risk & XVA Analytics Platform
-Bloomberg Terminal-style dark UI — 14-page Streamlit dashboard
+Bloomberg Terminal-style dark UI — multi-page Streamlit dashboard
 """
 
 import sys
@@ -303,6 +303,29 @@ def run_simulation(_curve, notional, fixed_rate, maturity, direction,
         maturity=maturity, direction=direction,
         n_paths=n_paths, a=a, sigma=sigma
     )
+
+
+# Equity market-data fetches hit NSE over the network (8–18s blocking with the
+# calibrated fallback). Cache them for the session so widget interactions on the
+# equity pages don't re-fetch on every rerun.
+@st.cache_data(ttl=300, show_spinner="Fetching NSE equity data…")
+def cached_equity_market_data(index):
+    from src.data_ingestion.equity_data import get_equity_market_data
+    return get_equity_market_data(index)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def cached_nifty_option_chain(index, spot, atm_vol):
+    from src.data_ingestion.equity_data import get_nifty_option_chain
+    return get_nifty_option_chain(index, spot=spot, atm_vol=atm_vol)
+
+
+# FIMMDA bond fetch loops up to 5 business days at a 12s timeout each (up to
+# ~60s when fimmda.org is unreachable). Cache so it blocks at most once.
+@st.cache_data(ttl=600, show_spinner=False)
+def cached_fimmda_zspread():
+    from src.data_ingestion.market_data import _fetch_fimmda_bond_zspread
+    return _fetch_fimmda_bond_zspread()
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1397,10 +1420,9 @@ elif page == "Data & Infrastructure Monitor":
     # ── FIMMDA Corporate Bond Z-Spreads (Gap 7) ──────────────────────────
     section_header("FIMMDA CORPORATE BOND Z-SPREADS",
                    "Live FIMMDA daily valuation sheet with fallback to published sector-average spreads")
-    from src.data_ingestion.market_data import _fetch_fimmda_bond_zspread
     try:
         with st.spinner("FETCHING FIMMDA BOND Z-SPREADS..."):
-            zspreads = _fetch_fimmda_bond_zspread()
+            zspreads = cached_fimmda_zspread()
     except Exception as _e:
         zspreads = {}
         st.markdown(f"<div class='stAlert'>FIMMDA FETCH UNAVAILABLE — {str(_e)[:60]}</div>",
@@ -2790,15 +2812,13 @@ elif page == "Equity Derivatives":
                 unsafe_allow_html=True)
     export_strip()
 
-    from src.data_ingestion.equity_data import (get_equity_market_data,
-                                                get_nifty_option_chain, get_equity_rate_correlation)
     from src.pricing.equity_options import EquityVolSmile, bsm_greeks
     from src.montecarlo.equity_mc import EquityGBM
 
     section_header("EQUITY MARKET DATA")
     eq_index = st.selectbox("INDEX", ["NIFTY", "BANKNIFTY"])
-    eqmd = get_equity_market_data(eq_index)
-    chain = get_nifty_option_chain(eq_index, spot=eqmd['spot'], atm_vol=eqmd['atm_vol'])
+    eqmd = cached_equity_market_data(eq_index)
+    chain = cached_nifty_option_chain(eq_index, eqmd['spot'], eqmd['atm_vol'])
     smile = EquityVolSmile.from_chain(chain, eqmd['atm_vol'])
 
     em_cols = st.columns(5)
@@ -2874,7 +2894,6 @@ elif page == "Hybrid Cross-Asset XVA":
                 unsafe_allow_html=True)
     export_strip()
 
-    from src.data_ingestion.equity_data import get_equity_market_data, get_nifty_option_chain
     from src.pricing.equity_options import EquityVolSmile
     from src.xva.hybrid_xva import HybridXVAEngine
 
@@ -2887,8 +2906,9 @@ elif page == "Hybrid Cross-Asset XVA":
     h_eq_dir = hc[2].selectbox("EQUITY LEG", ["Short Forward", "Long Forward", "Long Call", "Long Put"])
     h_corr = hc[3].slider("EQUITY-RATE CORR (ρ)", -0.8, 0.8, -0.15, 0.05)
 
-    eqmd = get_equity_market_data('NIFTY')
-    smile = EquityVolSmile.from_chain(get_nifty_option_chain('NIFTY'), eqmd['atm_vol'])
+    eqmd = cached_equity_market_data('NIFTY')
+    smile = EquityVolSmile.from_chain(
+        cached_nifty_option_chain('NIFTY', eqmd['spot'], eqmd['atm_vol']), eqmd['atm_vol'])
     eng = HybridXVAEngine(ois_curve, eqmd['spot'], eqmd['atm_vol'], eqmd['div_yield'],
                           a=mean_rev, sigma_r=vol, equity_rate_corr=h_corr, smile=smile)
     tg_h = np.linspace(0, float(maturity), max(13, int(maturity * 8) + 1))

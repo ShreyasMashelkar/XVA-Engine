@@ -97,19 +97,25 @@ class EquityGBM:
             t = time_grid[ti]
             tau = max(maturity - t, 0.0)
             r_t = ois_curve.zero_rate(maturity) if maturity > 1e-6 else 0.0
+            S_t = spot_paths[:, ti]
             if smile is not None:
-                fwd = spot_paths[:, ti] * np.exp((r_t - self.q) * tau)
-                vol = np.array([smile.vol(strike, f) for f in fwd])
+                fwd = S_t * np.exp((r_t - self.q) * tau)
+                # Vectorised smile vol (matches EquityVolSmile.vol element-wise):
+                # max(atm + skew·k + curv·k², 0.01), k = log(K/forward).
+                k = np.log(strike / fwd)
+                vol = np.maximum(
+                    smile.atm_vol + smile.skew * k + smile.curv * k ** 2, 0.01)
             else:
                 vol = np.full(n_paths, self.vol)
             if tau <= 0:
-                payoff = np.maximum(spot_paths[:, ti] - strike, 0.0) if call \
-                    else np.maximum(strike - spot_paths[:, ti], 0.0)
+                payoff = np.maximum(S_t - strike, 0.0) if call \
+                    else np.maximum(strike - S_t, 0.0)
                 mtm[:, ti] = units * payoff
             else:
-                mtm[:, ti] = units * np.array([
-                    bsm_price(S, strike, tau, r_t, self.q, v, call)
-                    for S, v in zip(spot_paths[:, ti], vol)])
+                # bsm_price is written with NumPy ops, so it broadcasts over the
+                # full path slice at once (164k scalar calls → one vector op).
+                mtm[:, ti] = units * bsm_price(S_t, strike, tau, r_t, self.q,
+                                               vol, call)
         return mtm
 
     def trs_mtm_paths(self, spot_paths: np.ndarray, time_grid: np.ndarray,
