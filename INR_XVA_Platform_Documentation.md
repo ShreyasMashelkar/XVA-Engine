@@ -1,4 +1,4 @@
-# INR OTC Derivatives Risk & XVA Analytics Platform (V3 Production Tier)
+# INR OTC Derivatives Risk & Multi-Asset XVA Analytics Platform (V4 Production Tier)
 
 ## Comprehensive Technical Architecture & Feature Documentation
 
@@ -15,7 +15,7 @@ Unlike generic Black-Scholes or USD SOFR academic projects, this platform is dee
 
 ## 2. Platform Architecture
 
-The V3 architecture adopts an institutional **microservices and batch-processing design**, completely decoupling the risk engines from the data layer and the UI.
+The V4 architecture adopts an institutional **microservices and batch-processing design**, completely decoupling the risk engines from the data layer and the UI. It now features a true multi-asset engine, incorporating both Rates and Equity dynamics.
 
 ```mermaid
 graph TD
@@ -97,6 +97,9 @@ dr(t) = [θ(t) - a * r(t)] dt + σ dW(t)
 
 ### 5.2 Simulation Execution
 Generates **10,000 future interest rate paths** across monthly time steps up to the longest trade maturity. At each time step, all trades in the portfolio are repriced, resulting in a matrix of future MTMs.
+
+### 5.3 Multi-Asset & Equity Monte Carlo
+For hybrid portfolios, the engine extends beyond HW1F to support **Geometric Brownian Motion (GBM)** and **Heston Stochastic Volatility** models for equity underlying assets. The hybrid exposure cube natively correlates rate and equity drivers, capturing cross-asset dependency.
 
 ---
 
