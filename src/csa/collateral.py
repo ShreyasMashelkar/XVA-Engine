@@ -12,6 +12,7 @@ Key parameter: MPOR (Margin Period of Risk) — the closeout period
 during which exposure persists even with perfect collateralisation.
 """
 
+import warnings
 import numpy as np
 from typing import Dict, Optional
 
@@ -50,15 +51,94 @@ class CSAEngine:
         self.margin_frequency = margin_frequency
         self.independent_amount = independent_amount
 
+    def _lagged_mtm(self, mtm_paths: np.ndarray,
+                    time_grid: np.ndarray) -> np.ndarray:
+        """
+        Reconstruct the last-margined MTM seen at each date — i.e. the MTM as
+        of ``t - MPoR`` — resolution-independently.
+
+        The collateral held at the close-out of a defaulting counterparty
+        reflects the *last successful margin call*, which under the Margin
+        Period of Risk (MPoR) δ happened δ ≈ ``mpor_days`` business days ago.
+        The exposure that matters is therefore the gap ``MTM(t) - MTM(t-δ)``
+        accumulated over that δ window.
+
+        Two failure modes of the naive "lag by N grid steps" approach are
+        fixed here:
+
+        1. **Quantisation / clamp.** ``round(δ/dt)`` collapses to 0 and is
+           clamped to a 1-step minimum whenever the grid is coarser than δ
+           (the usual case: monthly grid vs a 10-business-day MPoR). The
+           close-out window then equals the *plotting resolution*, not the
+           CSA. Here δ is honoured exactly by interpolating MTM at ``t-δ``.
+
+        2. **Lost diffusion.** Linear interpolation between coarse nodes
+           under-samples the variance of the δ-gap by √(δ/dt_local), which
+           *understates* collateralised exposure (the dangerous direction).
+           When the grid cannot resolve δ, the interpolated gap is rescaled
+           by √(dt_local/δ) so its dispersion matches a genuine δ-horizon
+           move. The correction is 1 (a no-op) as soon as the grid resolves
+           δ — e.g. when paths are simulated on an MPoR-aware grid — so the
+           exact-grid result is recovered.
+
+        Returns the per-path MTM-as-of-(t-δ), shape (n_paths, n_steps+1).
+        """
+        n_paths, n_time = mtm_paths.shape
+        mpor_years = max(self.mpor_days, 0) / 252.0
+
+        if mpor_years <= 0.0 or n_time < 2:
+            # No close-out lag: collateral can track MTM instantaneously.
+            return mtm_paths.copy()
+
+        query = time_grid - mpor_years            # the t-δ lookback times
+        # Bracketing nodes for each query time (vectorised over the grid).
+        hi = np.searchsorted(time_grid, query, side='right')
+        hi = np.clip(hi, 1, n_time - 1)
+        lo = hi - 1
+        span = time_grid[hi] - time_grid[lo]
+        span = np.where(span > 1e-12, span, 1e-12)
+        frac = np.clip((query - time_grid[lo]) / span, 0.0, 1.0)
+
+        # Linear (bridge-mean) interpolation of MTM at t-δ.
+        lagged = mtm_paths[:, lo] + frac * (mtm_paths[:, hi] - mtm_paths[:, lo])
+
+        # Diffusion correction: inflate the interpolated δ-gap so its variance
+        # matches a true δ-horizon move when the local grid is coarser than δ.
+        local_dt = time_grid[hi] - time_grid[lo]
+        scale = np.sqrt(np.maximum(local_dt / mpor_years, 1.0))   # ≥ 1
+        # Lookback within the bracketing step (the typical coarse-grid case)
+        # gets the correction; multi-step lookbacks already carry real
+        # diffusion, so leave them untouched.
+        within_step = lo == (np.arange(n_time) - 1)
+        scale = np.where(within_step, scale, 1.0)
+
+        gap = mtm_paths - lagged                  # MTM(t) - MTM(t-δ), per path
+        lagged_corr = mtm_paths - gap * scale     # = lagged when scale == 1
+
+        # Before the first close-out window there is no prior margin call.
+        lagged_corr[:, query <= time_grid[0]] = mtm_paths[:, query <= time_grid[0]]
+
+        if np.any(scale > 1.0 + 1e-9):
+            warnings.warn(
+                f"CSA grid (Δt≈{float(np.median(np.diff(time_grid))):.4f}y) is "
+                f"coarser than the {self.mpor_days}-day MPoR "
+                f"(δ≈{mpor_years:.4f}y); the close-out gap is variance-corrected "
+                f"but simulate on an MPoR-aware grid for an exact close-out.",
+                stacklevel=2,
+            )
+        return lagged_corr
+
     def compute_collateral(self, mtm_paths: np.ndarray,
                            time_grid: np.ndarray) -> np.ndarray:
         """
         Compute the collateral held at each time step.
 
-        Collateral(t) = max(MTM(t) - Threshold, 0) if MTM > Threshold + MTA
-                       = existing collateral otherwise (sticky below MTA)
+        Variation margin tracks the MTM as of the last successful margin call
+        (``t - MPoR``, see :meth:`_lagged_mtm`), subject to the posting
+        threshold and minimum transfer amount; the independent amount is held
+        on top throughout.
 
-        With MPOR: collateral reflects the MTM from mpor_steps ago.
+        Collateral(t) = max(MTM(t-δ) - Threshold, 0)   (+ MTA stickiness, + IA)
 
         Args:
             mtm_paths: MTM paths of shape (n_paths, n_steps+1).
@@ -72,42 +152,36 @@ class CSAEngine:
         if self.margin_frequency == 'none' or np.isinf(self.threshold):
             return np.zeros_like(mtm_paths)
 
-        # Convert MPOR days to time steps
-        dt = time_grid[1] - time_grid[0] if len(time_grid) > 1 else 1/12
-        mpor_years = self.mpor_days / 252  # Business days to years
-        mpor_steps = max(1, int(round(mpor_years / dt)))
+        dt = time_grid[1] - time_grid[0] if len(time_grid) > 1 else 1 / 12
 
-        collateral = np.zeros_like(mtm_paths)
+        # MTM as of the last margin call (t - MPoR), resolution-independent.
+        mtm_for_call = self._lagged_mtm(mtm_paths, time_grid)
+
+        # Variation margin only (independent amount added at the end so it is
+        # not re-accumulated each step).
+        vm = np.zeros_like(mtm_paths)
 
         # Margin frequency in steps
         if self.margin_frequency == 'daily':
             margin_every = 1
         elif self.margin_frequency == 'weekly':
-            margin_every = max(1, int(round((5/252) / dt)))
+            margin_every = max(1, int(round((5 / 252) / dt)))
         else:
             margin_every = n_steps_plus_1  # Never call
 
         for i in range(1, n_steps_plus_1):
-            # Use lagged MTM (MPOR effect)
-            lag_idx = max(0, i - mpor_steps)
-            mtm_for_call = mtm_paths[:, lag_idx]
-
             if i % margin_every == 0:
-                # Compute desired collateral
-                desired = np.maximum(mtm_for_call - self.threshold, 0.0)
+                # Desired VM against the last-margined MTM.
+                desired = np.maximum(mtm_for_call[:, i] - self.threshold, 0.0)
 
-                # Apply MTA: only transfer if change exceeds MTA
-                change = desired - collateral[:, i-1]
-                transfer = np.where(np.abs(change) >= self.mta,
-                                    change, 0.0)
-                collateral[:, i] = collateral[:, i-1] + transfer
+                # Apply MTA: only transfer if the change exceeds the MTA.
+                change = desired - vm[:, i - 1]
+                transfer = np.where(np.abs(change) >= self.mta, change, 0.0)
+                vm[:, i] = vm[:, i - 1] + transfer
             else:
-                collateral[:, i] = collateral[:, i-1]
+                vm[:, i] = vm[:, i - 1]
 
-            # Add independent amount
-            collateral[:, i] += self.independent_amount
-
-        return collateral
+        return vm + self.independent_amount
 
     def compute_collateralised_exposure(self, mtm_paths: np.ndarray,
                                          time_grid: np.ndarray) -> np.ndarray:

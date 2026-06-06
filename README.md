@@ -30,7 +30,7 @@ reporting → database persistence.
 - **Equity Monte Carlo** — Vectorized Geometric Brownian Motion & Heston stochastic volatility models
 - **HW1F Calibration** — OLS regression on RBI DBIE MIBOR history; both `a` and `σ` are data-driven
 - **Persistent Exposure Cube** — PyArrow/Parquet storage of path × time × trade NPVs; correct portfolio netting
-- **CSA Collateral Engine** — Threshold, MTA, MPOR-aware; uncollateralised vs. CCP comparison
+- **CSA Collateral Engine** — Threshold, MTA, exact continuous-time MPOR with Brownian diffusion correction; uncollateralised vs. CCP comparison
 
 ### XVA Engines
 - **CVA / DVA** — Bootstrapped hazard rates from synthetic Indian CDS spreads; bilateral CVA

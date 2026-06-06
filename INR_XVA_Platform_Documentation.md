@@ -113,8 +113,7 @@ Real-world exposure is rarely additive; it depends on ISDA Master Agreements and
 
 ### 6.2 CSA Collateral Simulation
 Models the actual posting of margin:
-- **Parameters:** Thresholds, Minimum Transfer Amounts (MTA), and Margin Period of Risk (MPOR, typically 10 days).
-- **Exposure Dampening:** Future exposure is calculated as `max(Portfolio_MTM(t) - Collateral(t - MPOR), 0)`.
+- **Parameters:** Thresholds, Minimum Transfer Amounts (MTA), and **Margin Period of Risk (MPoR)**: The close-out delay (e.g., 10-14 days). The engine accurately resolves the exact MPoR delay independently of the simulation grid resolution using continuous-time interpolation (`t - δ`). Crucially, it applies a **Brownian diffusion correction** `√(δ/dt)` to the interpolated gap when the grid is coarser than the MPoR window, preventing the dangerous under-estimation of collateralised exposure variance that plagues naive grid-clamped models.
 - Calculates **Expected Negative Exposure (ENE)** explicitly from the negative tail of the collateralized paths, which feeds the Debit Valuation Adjustment (DVA).
 
 ---
