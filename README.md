@@ -27,7 +27,7 @@ reporting → database persistence.
 
 ### Exposure Simulation
 - **Hull-White 1F Monte Carlo** — Exact simulation, 10,000 paths, EE/EPE/PFE/ENE/EEPE
-- **Equity Monte Carlo** — Geometric Brownian Motion & Heston stochastic volatility models
+- **Equity Monte Carlo** — Vectorized Geometric Brownian Motion & Heston stochastic volatility models
 - **HW1F Calibration** — OLS regression on RBI DBIE MIBOR history; both `a` and `σ` are data-driven
 - **Persistent Exposure Cube** — PyArrow/Parquet storage of path × time × trade NPVs; correct portfolio netting
 - **CSA Collateral Engine** — Threshold, MTA, MPOR-aware; uncollateralised vs. CCP comparison
@@ -62,7 +62,7 @@ reporting → database persistence.
 - **EOD Batch Engine** — Full portfolio CVA/FVA/KVA/MVA/EAD per counterparty in one run
 - **SQLite Persistence** — XVAResult, CurveSnapshot, MarketDataSnapshot via SQLAlchemy
 - **FastAPI REST Layer** — Comprehensive API endpoints for pricing, curves, and trade approval pipelines.
-- **Streamlit Dashboard** — 34 pages organized into institutional categories with dynamic dual-dropdown navigation.
+- **Streamlit Dashboard** — 34 pages organized into institutional categories with dynamic dual-dropdown navigation and heavy `@st.cache_data` state caching for instant reloads.
 
 ---
 
