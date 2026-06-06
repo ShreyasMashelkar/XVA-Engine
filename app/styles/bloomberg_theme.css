@@ -66,7 +66,7 @@ html, body, [class*="css"] {
 }
 
 /* ── Hide Streamlit chrome ───────────────────────────────────── */
-header[data-testid="stHeader"]     { background: transparent !important; }
+header[data-testid="stHeader"]     { background: transparent !important; z-index: 999999 !important; }
 #MainMenu                          { display: none !important; }
 footer                             { display: none !important; }
 [data-testid="stToolbar"]          { display: none !important; }
@@ -141,7 +141,7 @@ p, li, span, label {
   border-bottom: 2px solid var(--amber);
   display: flex;
   align-items: center;
-  padding: 0 16px;
+  padding: 0 16px 0 50px;
   height: 38px;
   gap: 16px;
   margin-bottom: 12px;
