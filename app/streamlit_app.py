@@ -352,6 +352,10 @@ PAGES = {
         "pages": ["AAD Greeks Engine", "Quasi-Monte Carlo", "Bermudan Exposure (LSM)",
                   "Cross-Currency XVA", "Stochastic WWR", "IFRS-13 Accounting"]
     },
+    "EQUITY & HYBRID": {
+        "fkey": "F10",
+        "pages": ["Equity Derivatives", "Hybrid Cross-Asset XVA"]
+    },
 }
 
 # Page → short label map for nav display
@@ -385,6 +389,8 @@ _PAGE_LABELS = {
     "Cross-Currency XVA":            "CROSS-CCY XVA",
     "Stochastic WWR":                "STOCHASTIC WWR",
     "IFRS-13 Accounting":            "IFRS-13 XVA",
+    "Equity Derivatives":            "EQUITY (NIFTY)",
+    "Hybrid Cross-Asset XVA":        "HYBRID XVA",
     "Stress & Scenario Analysis":    "STRESS TESTING",
     "Model Risk & Validation":       "MODEL VALIDATION",
     "Data & Infrastructure Monitor": "INFRA MONITOR",
@@ -2772,3 +2778,176 @@ elif page == "IFRS-13 Accounting":
         totals={"marker": {"color": COLORS['EE']}}))
     _apply_bbg_chart(figp, 'XVA P&L WATERFALL (DAY-OVER-DAY)')
     st.plotly_chart(figp, use_container_width=True)
+
+
+# ═════════════════════════════════════════════════════════════
+# EQUITY & HYBRID CROSS-ASSET PAGES
+# ═════════════════════════════════════════════════════════════
+elif page == "Equity Derivatives":
+    st.markdown("# Equity Derivatives")
+    st.markdown("<div style='color:#8899aa;font-size:0.72rem;margin-bottom:8px'>"
+                "NSE NIFTY / BANK NIFTY OPTIONS — BSM + VOL SMILE — EQUITY EXPOSURE (FREE NSE DATA)</div>",
+                unsafe_allow_html=True)
+    export_strip()
+
+    from src.data_ingestion.equity_data import (get_equity_market_data,
+                                                get_nifty_option_chain, get_equity_rate_correlation)
+    from src.pricing.equity_options import EquityVolSmile, bsm_greeks
+    from src.montecarlo.equity_mc import EquityGBM
+
+    section_header("EQUITY MARKET DATA")
+    eq_index = st.selectbox("INDEX", ["NIFTY", "BANKNIFTY"])
+    eqmd = get_equity_market_data(eq_index)
+    chain = get_nifty_option_chain(eq_index, spot=eqmd['spot'], atm_vol=eqmd['atm_vol'])
+    smile = EquityVolSmile.from_chain(chain, eqmd['atm_vol'])
+
+    em_cols = st.columns(5)
+    em_cols[0].metric("SPOT", f"{eqmd['spot']:,.0f}", accent="blue")
+    em_cols[1].metric("ATM VOL", f"{eqmd['atm_vol']*100:.1f}%", accent="amber")
+    em_cols[2].metric("INDIA VIX", f"{eqmd['india_vix']:.1f}", accent="red")
+    em_cols[3].metric("DIV YIELD", f"{eqmd['div_yield']*100:.2f}%", accent="green")
+    em_cols[4].metric("LOT SIZE", str(eqmd['lot_size']), accent="blue")
+    st.markdown(f"<div style='color:#556677;font-size:0.6rem'>SOURCE: {eqmd['source']}</div>",
+                unsafe_allow_html=True)
+
+    section_header("OPTION PRICING")
+    oc = st.columns(4)
+    o_strike = oc[0].number_input("STRIKE", value=float(round(eqmd['spot'] / 100) * 100), step=100.0)
+    o_expiry = oc[1].slider("EXPIRY (YRS)", 0.08, 2.0, 0.25, 0.02)
+    o_type = oc[2].selectbox("TYPE", ["Call", "Put"])
+    o_lots = oc[3].number_input("LOTS", value=10, step=1)
+    r_eq = ois_curve.zero_rate(max(o_expiry, 0.1))
+    fwd = eqmd['spot'] * np.exp((r_eq - eqmd['div_yield']) * o_expiry)
+    o_vol = smile.vol(o_strike, fwd)
+    from src.pricing.equity_options import bsm_price
+    units = eqmd['lot_size'] * o_lots
+    px = units * bsm_price(eqmd['spot'], o_strike, o_expiry, r_eq, eqmd['div_yield'], o_vol, o_type == "Call")
+    g = bsm_greeks(eqmd['spot'], o_strike, o_expiry, r_eq, eqmd['div_yield'], o_vol, o_type == "Call")
+
+    pc = st.columns(5)
+    pc[0].metric("OPTION VALUE", f"₹{px:,.0f}", accent="green")
+    pc[1].metric("SMILE VOL", f"{o_vol*100:.2f}%", accent="amber")
+    pc[2].metric("DELTA", f"{g['delta']*units:,.0f}", accent="blue")
+    pc[3].metric("GAMMA", f"{g['gamma']*units:.2f}", accent="blue")
+    pc[4].metric("VEGA (per %)", f"₹{g['vega']*units*0.01:,.0f}", accent="amber")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        section_header("VOLATILITY SMILE")
+        figsm = go.Figure()
+        figsm.add_trace(go.Scatter(x=chain['strike'], y=chain['implied_vol'] * 100,
+                                   name='IMPLIED VOL', mode='lines+markers',
+                                   line=dict(color=COLORS['EPE'], width=2.5),
+                                   hovertemplate='K=%{x:,.0f}<br>vol=%{y:.2f}%<extra></extra>'))
+        figsm.add_vline(x=eqmd['spot'], line_dash='dot', line_color=COLORS['EE'],
+                        annotation_text='SPOT', annotation_font=dict(color='#00aaff', size=9))
+        _apply_bbg_chart(figsm, f'{eq_index} VOL SMILE (NEGATIVE EQUITY SKEW)')
+        figsm.update_xaxes(title_text='STRIKE')
+        figsm.update_yaxes(title_text='IMPLIED VOL (%)')
+        st.plotly_chart(figsm, use_container_width=True)
+    with col2:
+        section_header("EQUITY EXPOSURE PROFILE")
+        gbm = EquityGBM(eqmd['spot'], eqmd['atm_vol'], eqmd['div_yield'])
+        tg_eq = np.linspace(0, o_expiry, 41)
+        S = gbm.simulate(tg_eq, int(min(n_paths, 4000)), ois_curve, seed=42)
+        mtm_eq = gbm.option_mtm_paths(S, tg_eq, ois_curve, o_strike, o_expiry, units,
+                                      call=(o_type == "Call"), smile=smile)
+        em = gbm.exposure_metrics(mtm_eq, tg_eq)
+        fige = go.Figure()
+        fige.add_trace(go.Scatter(x=tg_eq, y=em['PFE'] / 1e7, name='PFE 95%', mode='lines',
+                                  line=dict(color=COLORS['PFE'], width=2),
+                                  hovertemplate='PFE: ₹%{y:.3f} Cr<extra></extra>'))
+        fige.add_trace(go.Scatter(x=tg_eq, y=em['EE'] / 1e7, name='EE', mode='lines',
+                                  line=dict(color=COLORS['EE'], width=2.5), fill='tozeroy',
+                                  fillcolor='rgba(0,170,255,0.06)',
+                                  hovertemplate='EE: ₹%{y:.3f} Cr<extra></extra>'))
+        _apply_bbg_chart(fige, f'{eq_index} OPTION EXPOSURE (₹ CR)')
+        fige.update_xaxes(title_text='TIME (YEARS)')
+        fige.update_yaxes(title_text='EXPOSURE (₹ CR)')
+        st.plotly_chart(fige, use_container_width=True)
+
+
+elif page == "Hybrid Cross-Asset XVA":
+    st.markdown("# Hybrid Cross-Asset XVA")
+    st.markdown("<div style='color:#8899aa;font-size:0.72rem;margin-bottom:8px'>"
+                "MIXED RATES + EQUITY NETTING SET — JOINT SIMULATION — CROSS-ASSET DIVERSIFICATION</div>",
+                unsafe_allow_html=True)
+    export_strip()
+
+    from src.data_ingestion.equity_data import get_equity_market_data, get_nifty_option_chain
+    from src.pricing.equity_options import EquityVolSmile
+    from src.xva.hybrid_xva import HybridXVAEngine
+
+    section_header("NETTING SET — IRS + EQUITY LEG",
+                   "One counterparty netting set holding an interest-rate swap and an equity index "
+                   "trade, valued under a single joint (rate, equity) simulation.")
+    hc = st.columns(4)
+    h_swap_ntl = hc[0].number_input("IRS NOTIONAL (₹ CR)", value=500.0, step=50.0)
+    h_eq_ntl = hc[1].number_input("EQUITY NOTIONAL (₹ CR)", value=300.0, step=50.0)
+    h_eq_dir = hc[2].selectbox("EQUITY LEG", ["Short Forward", "Long Forward", "Long Call", "Long Put"])
+    h_corr = hc[3].slider("EQUITY-RATE CORR (ρ)", -0.8, 0.8, -0.15, 0.05)
+
+    eqmd = get_equity_market_data('NIFTY')
+    smile = EquityVolSmile.from_chain(get_nifty_option_chain('NIFTY'), eqmd['atm_vol'])
+    eng = HybridXVAEngine(ois_curve, eqmd['spot'], eqmd['atm_vol'], eqmd['div_yield'],
+                          a=mean_rev, sigma_r=vol, equity_rate_corr=h_corr, smile=smile)
+    tg_h = np.linspace(0, float(maturity), max(13, int(maturity * 8) + 1))
+
+    with st.spinner("RUNNING JOINT (RATE, EQUITY) SIMULATION..."):
+        sim = eng.simulate_joint(tg_h, int(min(n_paths, 6000)), seed=42)
+        swap = eng.swap_mtm(sim, h_swap_ntl, fixed_rate, float(maturity), payer=(direction == "Pay Fixed"))
+        units = int(h_eq_ntl * 1e7 / eqmd['spot'])
+        if h_eq_dir in ("Short Forward", "Long Forward"):
+            eq_rs = eng.eq.forward_mtm_paths(sim['spot'], tg_h, ois_curve, eqmd['spot'],
+                                             float(maturity), units, long=(h_eq_dir == "Long Forward"))
+        else:
+            eq_rs = eng.equity_option_mtm(sim, eqmd['spot'], float(maturity), units,
+                                          call=(h_eq_dir == "Long Call"))
+        eq_cr = eq_rs / 1e7
+        res = eng.compute_hybrid_xva(sim, [swap, eq_cr], credit_curve,
+                                     funding_spread_bps=cpty_row['funding_spread_bps'])
+
+    section_header("CROSS-ASSET DIVERSIFICATION")
+    dc = st.columns(4)
+    dc[0].metric("Σ STANDALONE CVA", f"₹{res['sum_standalone_cva']:.4f} CR", accent="amber")
+    dc[1].metric("HYBRID (NETTED) CVA", f"₹{res['CVA_hybrid']:.4f} CR", accent="red")
+    dc[2].metric("DIVERSIFICATION", f"₹{res['diversification_benefit_cva']:.4f} CR", accent="green")
+    dc[3].metric("NETTING BENEFIT", f"{res['netting_benefit_pct']:.1f}%", accent="green")
+
+    dc2 = st.columns(4)
+    dc2[0].metric("CVA (IRS LEG)", f"₹{res['standalone_cva'][0]:.4f} CR", accent="blue")
+    dc2[1].metric("CVA (EQUITY LEG)", f"₹{res['standalone_cva'][1]:.4f} CR", accent="blue")
+    dc2[2].metric("HYBRID DVA", f"₹{res['DVA_hybrid']:.4f} CR", accent="green")
+    dc2[3].metric("HYBRID FVA", f"₹{res['FVA_hybrid']:.4f} CR", accent="amber")
+
+    section_header("NETTED vs STANDALONE EXPOSURE")
+    figh = go.Figure()
+    figh.add_trace(go.Scatter(x=tg_h, y=res['standalone_EE'][0], name='IRS EE (STANDALONE)',
+                              mode='lines', line=dict(color=COLORS['EE'], width=1.5, dash='dash'),
+                              hovertemplate='IRS EE: ₹%{y:.3f} Cr<extra></extra>'))
+    figh.add_trace(go.Scatter(x=tg_h, y=res['standalone_EE'][1], name='EQUITY EE (STANDALONE)',
+                              mode='lines', line=dict(color=COLORS['EPE'], width=1.5, dash='dash'),
+                              hovertemplate='Equity EE: ₹%{y:.3f} Cr<extra></extra>'))
+    figh.add_trace(go.Scatter(x=tg_h, y=res['standalone_EE'][0] + res['standalone_EE'][1],
+                              name='SUM (NO NETTING)', mode='lines',
+                              line=dict(color='#8899aa', width=1.5, dash='dot'),
+                              hovertemplate='Sum EE: ₹%{y:.3f} Cr<extra></extra>'))
+    figh.add_trace(go.Scatter(x=tg_h, y=res['EE_netted'], name='NETTED EE (HYBRID)',
+                              mode='lines', line=dict(color=COLORS['ENE'], width=3),
+                              fill='tozeroy', fillcolor='rgba(0,204,102,0.06)',
+                              hovertemplate='Netted EE: ₹%{y:.3f} Cr<extra></extra>'))
+    _apply_bbg_chart(figh, 'CROSS-ASSET NETTING — HYBRID EE BELOW THE SUM OF STANDALONE')
+    figh.update_layout(hovermode='x unified')
+    figh.update_xaxes(title_text='TIME (YEARS)')
+    figh.update_yaxes(title_text='EXPOSURE (₹ CR)')
+    st.plotly_chart(figh, use_container_width=True)
+
+    st.markdown(f"<div class='assumptions-panel'><div class='ap-title'>WHY THIS MATTERS</div>"
+                f"<div style='font-size:0.7rem;color:#8899aa;line-height:1.5'>"
+                f"A single-asset XVA engine would charge ₹{res['sum_standalone_cva']:.4f} Cr "
+                f"(IRS + equity computed separately). Valuing the mixed book under ONE joint "
+                f"(rate, equity) simulation captures the cross-asset offset, reducing the CVA to "
+                f"₹{res['CVA_hybrid']:.4f} Cr — a {res['netting_benefit_pct']:.1f}% netting benefit "
+                f"that varies with the equity-rate correlation (ρ={h_corr:+.2f}). This is the "
+                f"capability that distinguishes a multi-asset XVA engine from asset-by-asset "
+                f"calculators.</div></div>", unsafe_allow_html=True)
