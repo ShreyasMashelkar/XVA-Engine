@@ -6,7 +6,7 @@
 
 ## 1. Project Overview
 
-**Project Name:** End-to-End INR Counterparty Risk & XVA Analytics Platform (V3)
+**Project Name:** End-to-End INR Counterparty Risk & Multi-Asset XVA Analytics Platform (V4)
 **Objective:** A full-stack, production-grade quantitative finance system engineered for pricing, risk management, stress testing, and regulatory capital computation on Indian OTC interest rate derivatives. 
 
 Unlike generic Black-Scholes or USD SOFR academic projects, this platform is deeply specialized for the **Indian Rates Market**. It processes real-time FBIL MIBOR benchmarks, RBI DBIE sovereign curves, and synthetic Indian corporate credit models, mirroring the exact infrastructure used by Counterparty Credit Risk (CCR) and XVA desks at major investment banks operating in India (e.g., JPM, Nomura, Barclays, SBI, HDFC).
@@ -44,7 +44,7 @@ graph TD
         CVA --> FastAPI[FastAPI REST Gateway]
         FVA --> FastAPI
         KVA --> FastAPI
-        FastAPI --> Streamlit[Streamlit Bloomberg-Style Dashboard]
+        FastAPI --> Streamlit[Streamlit 34-Page Bloomberg-Style Dashboard]
         Stress[Historical Stress Testing Engine] --> Streamlit
     end
 ```

@@ -1,4 +1,4 @@
-# INR OTC Derivatives Risk & XVA Analytics Platform
+# INR OTC Derivatives Risk & Multi-Asset XVA Analytics Platform
 
 An end-to-end quantitative finance platform for pricing, CCR risk management,
 XVA computation, and regulatory capital on Indian OTC interest rate derivatives.
@@ -62,7 +62,7 @@ reporting → database persistence.
 - **EOD Batch Engine** — Full portfolio CVA/FVA/KVA/MVA/EAD per counterparty in one run
 - **SQLite Persistence** — XVAResult, CurveSnapshot, MarketDataSnapshot via SQLAlchemy
 - **FastAPI REST Layer** — Comprehensive API endpoints for pricing, curves, and trade approval pipelines.
-- **Streamlit Dashboard** — 30+ pages organized into institutional categories with dynamic dual-dropdown navigation.
+- **Streamlit Dashboard** — 34 pages organized into institutional categories with dynamic dual-dropdown navigation.
 
 ---
 
@@ -128,7 +128,7 @@ XVA Engine/
 │   ├── wwr/              # Specific & General wrong-way risk
 │   └── xva/              # CVA, DVA, FVA v1/v2, KVA, MVA, SIMM
 ├── api/                  # FastAPI REST endpoints
-├── app/                  # Streamlit dashboard (15+ pages)
+├── app/                  # Streamlit dashboard (34 pages)
 ├── db/                   # SQLAlchemy models + SQLite
 ├── data/                 # Portfolio, counterparties, CSA master, exposure cube
 ├── reports/              # EOD batch output CSV
@@ -145,4 +145,4 @@ Python 3.10+ · NumPy · SciPy · Pandas · PyArrow · Plotly · Streamlit · Fa
 
 ## Resume Line
 
-> Built an end-to-end INR OTC derivatives risk, multi-asset XVA analytics, and institutional governance platform. Implemented FBIL MIBOR OIS curve bootstrapping, SABR vol surface, Hull-White/Heston Monte Carlo, CSA-aware exposure simulation via a persistent Parquet cube, and full multi-asset XVA suite (CVA/DVA/FVA/MVA/KVA). Engineered a complete front-to-back institutional workflow integrating Basel SA-CCR/FRTB-CVA capital, Economic Capital (ASRF), pre-trade limits, Incremental XVA via identical MC paths, and RAROC-based automated Trade Approval. Includes an MRM model validation suite (IMM backtesting), PnL/Exposure attribution, IFRS-13 accounting, FastAPI REST layer, SQLite persistence, and a comprehensive 30+ page Streamlit dashboard. All data anchored to free Indian market sources (RBI DBIE, FIMMDA).
+> Built an end-to-end INR OTC derivatives risk, multi-asset XVA analytics, and institutional governance platform. Implemented FBIL MIBOR OIS curve bootstrapping, SABR vol surface, Hull-White/Heston Monte Carlo, CSA-aware exposure simulation via a persistent Parquet cube, and full multi-asset XVA suite (CVA/DVA/FVA/MVA/KVA). Engineered a complete front-to-back institutional workflow integrating Basel SA-CCR/FRTB-CVA capital, Economic Capital (ASRF), pre-trade limits, Incremental XVA via identical MC paths, and RAROC-based automated Trade Approval. Includes an MRM model validation suite (IMM backtesting), PnL/Exposure attribution, IFRS-13 accounting, FastAPI REST layer, SQLite persistence, and a comprehensive 34-page Streamlit dashboard. All data anchored to free Indian market sources (RBI DBIE, FIMMDA).
