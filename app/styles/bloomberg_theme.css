@@ -67,6 +67,7 @@ html, body, [class*="css"] {
 
 /* ── Hide Streamlit chrome ───────────────────────────────────── */
 header[data-testid="stHeader"]     { background: transparent !important; z-index: 999999 !important; }
+[data-testid="collapsedControl"]   { z-index: 999999 !important; }
 #MainMenu                          { display: none !important; }
 footer                             { display: none !important; }
 [data-testid="stToolbar"]          { display: none !important; }
