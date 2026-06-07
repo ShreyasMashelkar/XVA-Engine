@@ -246,7 +246,7 @@ def run_v2_engines():
     trades = portfolio_df.to_dict('records')
     
     hw_model = HullWhite1F(ois_curve, a=0.10, sigma=0.01)
-    time_grid, rate_paths = hw_model.simulate_rates(n_paths=2000, n_steps=60, horizon=10.0)
+    time_grid, rate_paths = hw_model.simulate_rates(n_paths=1200, n_steps=48, horizon=10.0)
     
     netting = NettingEngine(time_grid, rate_paths, hw_model)
     trade_mtm_paths = netting.calculate_trade_mtm_paths(trades, projection_curve=mcf.mibor)
@@ -419,6 +419,11 @@ _PAGE_LABELS = {
     "Data & Infrastructure Monitor": "INFRA MONITOR",
 }
 
+# ── Deploy build stamp — BUMP THIS STRING ON EVERY PUSH ──────────────
+# If the sidebar/footer doesn't show this exact value on the cloud, the
+# deployment is NOT serving your latest commit (stuck build / wrong branch).
+BUILD_ID = "2026-06-07 · 1"
+
 with st.sidebar:
     st.markdown("""
 <div class="sidebar-header">
@@ -426,6 +431,12 @@ with st.sidebar:
   <div class="platform-sub">INR OTC DERIVATIVES &nbsp;&#9679;&nbsp; RISK ANALYTICS</div>
 </div>
 """, unsafe_allow_html=True)
+
+    # Build stamp — bump BUILD_ID on every deploy to verify the LIVE version.
+    st.markdown(f"""<div style='background:#1a0f00;border:1px solid #ff6600;
+        border-radius:4px;text-align:center;color:#ff8a33;font-size:0.62rem;
+        font-weight:700;letter-spacing:.10em;padding:4px;margin:2px 0 8px'>
+        &#11042; BUILD {BUILD_ID}</div>""", unsafe_allow_html=True)
 
     if 'current_page' not in st.session_state:
         st.session_state.current_page = "Executive Risk Dashboard"
@@ -483,7 +494,7 @@ with st.sidebar:
         text-transform:uppercase;letter-spacing:.12em;padding:4px 0 2px'>
         HW1F MODEL PARAMS</div>""", unsafe_allow_html=True)
 
-    n_paths  = st.select_slider("MC PATHS", options=[1000, 2000, 5000, 10000], value=5000)
+    n_paths  = st.select_slider("MC PATHS", options=[1000, 2000, 5000, 10000], value=2000)
     mean_rev = st.slider("MEAN REVERSION (a)", 0.01, 0.30, 0.10, 0.01)
     vol      = st.slider("VOLATILITY (σ)", 0.005, 0.025, 0.010, 0.001)
 
@@ -491,7 +502,7 @@ with st.sidebar:
     st.markdown(f"""<div style='color:#556677;font-size:0.60rem;text-align:center;
         padding:4px 0;letter-spacing:.06em'>
         XVA ANALYTICS PLATFORM &nbsp;&#9679;&nbsp; JUNE 2026<br>
-        BUILD: v3.0 &nbsp;&#9679;&nbsp; HULL-WHITE 1F</div>""", unsafe_allow_html=True)
+        BUILD {BUILD_ID} &nbsp;&#9679;&nbsp; HULL-WHITE 1F</div>""", unsafe_allow_html=True)
 
 
 # ─────────────────────────────────────────────────────────────
