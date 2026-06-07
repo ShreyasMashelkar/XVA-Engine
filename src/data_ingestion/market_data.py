@@ -97,13 +97,13 @@ def _fetch_fimmda_ois() -> pd.DataFrame:
         'Accept': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,*/*',
     }
     
-    for days_back in range(0, 4):
+    for days_back in range(0, 2):
         date = datetime.today() - timedelta(days=days_back)
         date_str = date.strftime('%d%m%Y')
         url = f'https://www.fimmda.org/uploads/RateFiles/{date_str}_FIMMDA.xlsx'
         
         try:
-            resp = requests.get(url, headers=HEADERS, timeout=12)
+            resp = requests.get(url, headers=HEADERS, timeout=5)
             if resp.status_code != 200:
                 continue
             
@@ -208,7 +208,7 @@ def _fetch_rbi_dbie_series(series_id: str, years_back: int = 3) -> pd.Series:
         'Accept': 'text/csv,application/csv,text/plain,*/*',
     }
     
-    resp = requests.get(url, headers=HEADERS, timeout=12)
+    resp = requests.get(url, headers=HEADERS, timeout=5)
     resp.raise_for_status()
     
     lines = resp.text.strip().split('\n')
@@ -300,12 +300,12 @@ def _fetch_fimmda_bond_zspread() -> dict:
     }
 
     # Try FIMMDA daily Excel for up to 5 business days back
-    for days_back in range(0, 5):
+    for days_back in range(0, 2):
         try:
             date     = datetime.today() - timedelta(days=days_back)
             date_str = date.strftime('%d%m%Y')
             url      = f'https://www.fimmda.org/uploads/RateFiles/{date_str}_FIMMDA.xlsx'
-            resp     = requests.get(url, headers=HEADERS, timeout=12)
+            resp     = requests.get(url, headers=HEADERS, timeout=5)
             if resp.status_code != 200:
                 continue
 

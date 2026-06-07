@@ -61,9 +61,9 @@ def get_equity_market_data(index: str = 'NIFTY') -> Dict:
         sess = requests.Session()
         sess.headers.update(_NSE_HEADERS)
         # NSE requires a homepage hit first to set cookies
-        sess.get('https://www.nseindia.com', timeout=8)
+        sess.get('https://www.nseindia.com', timeout=4)
         url = f'https://www.nseindia.com/api/option-chain-indices?symbol={index}'
-        resp = sess.get(url, timeout=10)
+        resp = sess.get(url, timeout=5)
         if resp.status_code == 200:
             data = resp.json()
             spot = float(data['records']['underlyingValue'])
@@ -103,8 +103,8 @@ def get_india_vix() -> float:
     try:
         import requests
         sess = requests.Session(); sess.headers.update(_NSE_HEADERS)
-        sess.get('https://www.nseindia.com', timeout=8)
-        resp = sess.get('https://www.nseindia.com/api/allIndices', timeout=10)
+        sess.get('https://www.nseindia.com', timeout=4)
+        resp = sess.get('https://www.nseindia.com/api/allIndices', timeout=5)
         if resp.status_code == 200:
             for idx in resp.json().get('data', []):
                 if 'VIX' in idx.get('index', '').upper():
@@ -134,9 +134,9 @@ def get_nifty_option_chain(index: str = 'NIFTY',
     try:
         import requests
         sess = requests.Session(); sess.headers.update(_NSE_HEADERS)
-        sess.get('https://www.nseindia.com', timeout=8)
+        sess.get('https://www.nseindia.com', timeout=4)
         url = f'https://www.nseindia.com/api/option-chain-indices?symbol={index.upper()}'
-        resp = sess.get(url, timeout=10)
+        resp = sess.get(url, timeout=5)
         if resp.status_code == 200:
             rows = resp.json()['records']['data']
             recs = []
