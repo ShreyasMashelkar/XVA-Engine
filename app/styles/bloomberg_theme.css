@@ -65,9 +65,31 @@ html, body, [class*="css"] {
   background-size: 24px 24px;
 }
 
-/* ── Hide Streamlit chrome ───────────────────────────────────── */
-header[data-testid="stHeader"]     { background: transparent !important; z-index: 999999 !important; }
-[data-testid="collapsedControl"]   { z-index: 999999 !important; }
+/* ── Hide Streamlit chrome (but NEVER the sidebar toggle) ─────── */
+header[data-testid="stHeader"]     { background: transparent !important; z-index: 999990 !important; }
+
+/* Keep the sidebar collapse/expand control visible & clickable on EVERY
+   Streamlit version — the test-id has been renamed across releases, so we
+   target all known variants. Without this the sidebar can become impossible
+   to open on the deployed app. */
+[data-testid="collapsedControl"],
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="stSidebarCollapseButton"],
+[data-testid="stExpandSidebarButton"],
+[data-testid="stSidebarHeader"] button,
+[data-testid="baseButton-headerNoPadding"],
+header[data-testid="stHeader"] button {
+  display: inline-flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  z-index: 1000000 !important;
+  color: var(--amber) !important;
+}
+
+/* The sidebar itself must always be allowed to render. */
+section[data-testid="stSidebar"] { visibility: visible !important; }
+
 #MainMenu                          { display: none !important; }
 footer                             { display: none !important; }
 [data-testid="stToolbar"]          { display: none !important; }
