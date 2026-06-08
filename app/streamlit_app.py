@@ -22,7 +22,7 @@ from plotly.subplots import make_subplots
 from src.data_ingestion.market_data import (
     get_ois_market_data, get_gsec_market_data, get_counterparty_data,
     get_sample_portfolio, get_csa_scenarios, get_stress_scenarios,
-    get_policy_rates, OIS_TENOR_LABELS
+    get_policy_rates, get_data_provenance, OIS_TENOR_LABELS
 )
 from src.curves.ois_curve import OISCurve, GSecCurve
 from src.pricing.swap_pricer import SwapPricer, price_portfolio
@@ -436,6 +436,51 @@ with st.sidebar:
         border-radius:4px;text-align:center;color:#ff8a33;font-size:0.62rem;
         font-weight:700;letter-spacing:.10em;padding:4px;margin:2px 0 8px'>
         &#11042; BUILD {BUILD_ID}</div>""", unsafe_allow_html=True)
+
+    # ── Data-source badge — honestly shows which tier (LIVE / CACHED /
+    # SYNTHETIC) served each dataset this session. Loading the (cached)
+    # market data first guarantees provenance is populated.
+    load_market_data()
+    _prov = get_data_provenance()
+    _TIER_STYLE = {
+        'live':      ('#0f1f12', '#00cc66', 'LIVE'),
+        'cached':    ('#1f1a0a', '#ffaa00', 'CACHED'),
+        'synthetic': ('#1f1010', '#ff5544', 'SYNTHETIC'),
+    }
+    _DATASETS = [
+        ('ois_curve',           'OIS CURVE'),
+        ('gsec_curve',          'G-SEC CURVE'),
+        ('policy_rates',        'POLICY RATES'),
+        ('counterparty_credit', 'CP CREDIT'),
+        ('mibor_history',       'MIBOR HISTORY'),
+    ]
+    # Headline reflects the CORE market data (curves + policy); the expander
+    # below gives the full per-dataset breakdown including secondary feeds.
+    _CORE = ('ois_curve', 'gsec_curve', 'policy_rates')
+    _order = {'live': 0, 'cached': 1, 'synthetic': 2}
+    _present = [_prov[k]['tier'] for k in _CORE if k in _prov]
+    _overall = max(_present, key=lambda t: _order[t]) if _present else 'synthetic'
+    _bg, _fg, _lbl = _TIER_STYLE[_overall]
+    _src = _prov.get('ois_curve', {}).get('source', '')
+    _suffix = f" &middot; {_src}" if (_overall == 'live' and _src) else ''
+    st.markdown(f"""<div style='background:{_bg};border:1px solid {_fg};
+        border-radius:4px;text-align:center;color:{_fg};font-size:0.62rem;
+        font-weight:700;letter-spacing:.10em;padding:4px;margin:2px 0 6px'>
+        &#9679; DATA: {_lbl}{_suffix}</div>""", unsafe_allow_html=True)
+
+    with st.expander("DATA SOURCES", expanded=False):
+        for _key, _label in _DATASETS:
+            _p = _prov.get(_key)
+            if not _p:
+                continue
+            _dot = _TIER_STYLE[_p['tier']][1]
+            _tlbl = _TIER_STYLE[_p['tier']][2]
+            _ssrc = f" &middot; {_p['source']}" if _p['source'] else ''
+            st.markdown(f"""<div style='font-size:0.58rem;color:#8899aa;
+                display:flex;justify-content:space-between;gap:6px;padding:1px 0'>
+                <span>{_label}</span>
+                <span style='color:{_dot};font-weight:700'>&#9679; {_tlbl}{_ssrc}</span>
+                </div>""", unsafe_allow_html=True)
 
     if 'current_page' not in st.session_state:
         st.session_state.current_page = "Executive Risk Dashboard"

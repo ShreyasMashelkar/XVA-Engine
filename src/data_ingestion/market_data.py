@@ -8,6 +8,7 @@ Supports 3-tier fallback architecture:
 """
 
 import os
+import re
 import json
 import logging
 import requests
@@ -87,7 +88,108 @@ def _save_cache(key: str, data) -> None:
         logging.warning(f'[Cache] Save failed: {e}')
 
 # ---------------------------------------------------------------------------
-# Core Fetchers
+# Provenance tracker — lets the UI honestly show which fallback tier
+# (live / cached / synthetic) actually served each dataset this session.
+# ---------------------------------------------------------------------------
+
+_PROVENANCE: Dict[str, dict] = {}
+
+
+def _set_provenance(key: str, tier: str, source: str = '') -> None:
+    """Record the tier ('live' | 'cached' | 'synthetic') that served `key`."""
+    _PROVENANCE[key] = {
+        'tier':   tier,
+        'source': source,
+        'ts':     datetime.now().isoformat(timespec='seconds'),
+    }
+
+
+def get_data_provenance() -> Dict[str, dict]:
+    """Return a copy of the per-dataset provenance recorded this session."""
+    return dict(_PROVENANCE)
+
+# ---------------------------------------------------------------------------
+# RBI National Summary Data Page (NSDP) — primary live source
+# ---------------------------------------------------------------------------
+# The legacy FIMMDA daily-Excel and DBIE CSV endpoints were retired: RBI
+# migrated DBIE to a JavaScript SPA (data.rbi.org.in, no CSV API) and FIMMDA
+# moved its rates behind FBIL/reCAPTCHA. The NSDP page is a stable,
+# server-rendered HTML table RBI maintains for IMF SDDS reporting. It carries
+# policy rates, T-Bill yields and the 10Y G-Sec par yield, with no auth and a
+# valid TLS chain — so it is a reliable, scrape-friendly live source.
+
+_NSDP_URL = 'https://www.rbi.org.in/Scripts/BS_NSDPDisplay.aspx?param=4'
+
+_NSDP_LABELS = {
+    'repo':         'Repo Rate',
+    'reverse_repo': 'Fixed Reverse Repo Rate',
+    'sdf':          'Standing Deposit Facility (SDF) Rate *',
+    'msf':          'Marginal Standing Facility (MSF) Rate',
+    'bank_rate':    'Bank Rate',
+    'slr':          'Statutory Liquidity Ratio',
+    'crr':          'Cash Reserve Ratio',
+    'call':         'Call Money Rate (Weighted Average)',
+    'tb91':         '91-Day Treasury Bill (Primary) Yield',
+    'tb182':        '182-Day Treasury Bill (Primary) Yield',
+    'tb364':        '364-Day Treasury Bill (Primary) Yield',
+    'gsec10':       '10-Year G-Sec Par Yield (FBIL)',
+}
+
+# In-process memo so OIS / G-Sec / policy curves share a single HTTP round-trip
+# per session instead of hitting RBI three times on every Streamlit rerun.
+_NSDP_MEMO: dict = {'ts': None, 'data': None}
+
+
+def _fetch_rbi_nsdp(max_age_sec: int = 3600) -> Dict[str, float]:
+    """
+    Fetch and parse the RBI NSDP page into {key: rate_as_fraction}.
+
+    The page lays each item out as '<Item Name> v1 v2 ... vN' where vN is the
+    most recent weekly observation, so we take the last plain float after each
+    label. Values are published in per-cent and converted to fractions here.
+
+    Memoised in-process (TTL = max_age_sec). Raises on network or parse failure
+    so callers can fall through to the cache / synthetic tiers.
+    """
+    now = datetime.now()
+    memo = _NSDP_MEMO
+    if (memo['data'] is not None and memo['ts'] is not None
+            and (now - memo['ts']).total_seconds() < max_age_sec):
+        return memo['data']
+
+    HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    resp = requests.get(_NSDP_URL, headers=HEADERS, timeout=8)
+    resp.raise_for_status()
+
+    txt = re.sub(r'<[^>]+>', ' ', resp.text)
+    txt = re.sub(r'&nbsp;', ' ', txt)
+    txt = re.sub(r'\s+', ' ', txt)
+
+    def _last_value(label: str) -> Optional[float]:
+        m = re.search(re.escape(label) + r'\s*((?:[-+]?\d+\.\d+(?:/\d+\.\d+)?\s+){1,10})', txt)
+        if not m:
+            return None
+        toks = [t for t in m.group(1).split() if re.fullmatch(r'\d+\.\d+', t)]
+        return float(toks[-1]) if toks else None
+
+    out: Dict[str, float] = {}
+    for key, label in _NSDP_LABELS.items():
+        v = _last_value(label)
+        if v is not None:
+            out[key] = v / 100.0
+
+    required = ('repo', 'tb91', 'tb364', 'gsec10')
+    if not all(k in out for k in required):
+        raise RuntimeError(f'NSDP parse incomplete: got {sorted(out)}')
+
+    memo['ts'] = now
+    memo['data'] = out
+    logging.info(f'[MarketData] RBI NSDP live pull OK: {len(out)} rates')
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Core Fetchers (legacy — FIMMDA Excel / DBIE CSV; retained as best-effort)
 # ---------------------------------------------------------------------------
 
 def _fetch_fimmda_ois() -> pd.DataFrame:
@@ -364,22 +466,68 @@ def _fetch_fimmda_bond_zspread() -> dict:
 # ---------------------------------------------------------------------------
 
 def get_policy_rates() -> Dict[str, float]:
-    return {k: v for k, v in POLICY_RATES.items() if not k.startswith('_')}
+    try:
+        live = _fetch_rbi_nsdp()
+        rates = {
+            'repo_rate':         live['repo'],
+            'sdf_rate':          live.get('sdf',          POLICY_RATES['sdf_rate']),
+            'msf_rate':          live.get('msf',          POLICY_RATES['msf_rate']),
+            'reverse_repo_rate': live.get('reverse_repo', POLICY_RATES['reverse_repo_rate']),
+            'crr':               live.get('crr',          POLICY_RATES['crr']),
+        }
+        _save_cache('policy_rates', rates)
+        logging.info('[MarketData] Policy rates loaded from RBI NSDP')
+        _set_provenance('policy_rates', 'live', 'RBI NSDP')
+        return rates
+    except Exception as e:
+        logging.warning(f'[MarketData] Policy-rate NSDP fetch failed: {e}. Trying cache.')
+        cached = _load_cache().get('policy_rates')
+        if cached:
+            _set_provenance('policy_rates', 'cached', 'fallback_cache.json')
+            return cached
+        logging.warning('[MarketData] Cache miss. Using hardcoded policy rates.')
+        _set_provenance('policy_rates', 'synthetic', 'hardcoded')
+        return {k: v for k, v in POLICY_RATES.items() if not k.startswith('_')}
 
 
 def get_ois_market_data() -> pd.DataFrame:
+    """
+    Build a live-anchored INR OIS curve from RBI NSDP money-market rates.
+
+    Anchors (levels all live): overnight = Call Money WAR; 3M ≈ 91D T-Bill;
+    6M ≈ 182D T-Bill; 1Y ≈ 364D T-Bill; long end from the 10Y G-Sec par yield.
+    A tenor-widening G-Sec/OIS basis (~5bp short → ~45bp at 10Y) is subtracted
+    so OIS trades below G-Sec, as it does in the INR market; intermediate
+    tenors are linearly interpolated in yield space.
+    """
     try:
-        fimmda_raw = _fetch_fimmda_ois()
-        df = _build_full_ois_curve(fimmda_raw)
+        live = _fetch_rbi_nsdp()
+        on = live.get('call', live['repo'])
+        # (tenor, live level, G-Sec/OIS basis) — OIS = level − basis
+        anchor_t = [1/365, 0.25,           0.5,            1.0,            10.0]
+        anchor_r = [on,
+                    live['tb91']  - 0.0005,
+                    live['tb182'] - 0.0008,
+                    live['tb364'] - 0.0010,
+                    live['gsec10'] - 0.0045]
+        rates = [float(np.interp(t, anchor_t, anchor_r)) for t in OIS_TENORS_YEARS]
+        df = pd.DataFrame({
+            'tenor_label': OIS_TENOR_LABELS,
+            'tenor_years': OIS_TENORS_YEARS,
+            'ois_rate':    rates,
+        })
         _save_cache('ois_data', df.to_dict('records'))
-        logging.info('[MarketData] OIS curve loaded from FIMMDA')
+        logging.info('[MarketData] OIS curve anchored to RBI NSDP live rates')
+        _set_provenance('ois_curve', 'live', 'RBI NSDP')
         return df
     except Exception as e:
-        logging.warning(f'[MarketData] FIMMDA OIS fetch failed: {e}. Trying cache.')
+        logging.warning(f'[MarketData] OIS NSDP fetch failed: {e}. Trying cache.')
         cached = _load_cache().get('ois_data')
         if cached:
+            _set_provenance('ois_curve', 'cached', 'fallback_cache.json')
             return pd.DataFrame(cached)
         logging.warning('[MarketData] Cache miss. Using synthetic OIS fallback.')
+        _set_provenance('ois_curve', 'synthetic', 'hardcoded')
         return pd.DataFrame({
             'tenor_label': OIS_TENOR_LABELS,
             'tenor_years': OIS_TENORS_YEARS,
@@ -388,26 +536,20 @@ def get_ois_market_data() -> pd.DataFrame:
 
 
 def get_gsec_market_data() -> pd.DataFrame:
+    """
+    Build the INR G-Sec / T-Bill curve from RBI NSDP live yields.
+
+    Live anchors: 91D / 182D / 364D primary T-Bill yields and the 10Y G-Sec
+    par yield. 2Y and 5Y are interpolated; 30Y is extrapolated off the live
+    1Y→10Y slope, heavily damped (the INR curve flattens well beyond 10Y, so
+    the steep money-market→10Y slope must not be carried out to 30Y).
+    """
     try:
-        rows = {}
-        for sid, label, t in [
-            ('TBILL91_YLD',  '91D T-Bill',  91/365),
-            ('TBILL182_YLD', '182D T-Bill', 182/365),
-            ('TBILL364_YLD', '364D T-Bill', 364/365),
-            ('GSEC10_YLD',   '10Y G-Sec',   10.0),
-        ]:
-            try:
-                s = _fetch_rbi_dbie_series(sid, years_back=1)
-                rows[t] = {'tenor_label': label, 'yield_rate': float(s.iloc[-1])}
-            except Exception:
-                pass
-        
-        if len(rows) < 2:
-            raise RuntimeError('Fewer than 2 G-Sec tenors fetched from DBIE')
-        
-        avail_t = sorted(rows.keys())
-        avail_r = [rows[t]['yield_rate'] for t in avail_t]
-        
+        live = _fetch_rbi_nsdp()
+        anchor_t = [91/365, 182/365, 364/365, 10.0]
+        anchor_r = [live['tb91'], live['tb182'], live['tb364'], live['gsec10']]
+        long_slope = (live['gsec10'] - live['tb364']) / (10.0 - 364/365)
+
         TARGET = [
             (91/365,  '91D T-Bill'),
             (182/365, '182D T-Bill'),
@@ -417,30 +559,31 @@ def get_gsec_market_data() -> pd.DataFrame:
             (10.0,    '10Y G-Sec'),
             (30.0,    '30Y G-Sec'),
         ]
-        
         final_yields = []
-        for t, label in TARGET:
-            if t <= max(avail_t):
-                y = float(np.interp(t, avail_t, avail_r))
+        for t, _ in TARGET:
+            if t <= 10.0:
+                final_yields.append(float(np.interp(t, anchor_t, anchor_r)))
             else:
-                y = avail_r[-1] + (avail_r[-1] - np.interp(5.0, avail_t, avail_r)) * 0.5
-            final_yields.append(y)
-        
+                final_yields.append(live['gsec10'] + long_slope * (t - 10.0) * 0.25)
+
         df = pd.DataFrame({
             'tenor_label': [t[1] for t in TARGET],
             'tenor_years': [t[0] for t in TARGET],
             'yield_rate':  final_yields,
         })
         _save_cache('gsec_data', df.to_dict('records'))
-        logging.info('[MarketData] G-Sec curve loaded from RBI DBIE')
+        logging.info('[MarketData] G-Sec curve loaded from RBI NSDP')
+        _set_provenance('gsec_curve', 'live', 'RBI NSDP')
         return df
-    
+
     except Exception as e:
-        logging.warning(f'[MarketData] G-Sec DBIE fetch failed: {e}. Trying cache.')
+        logging.warning(f'[MarketData] G-Sec NSDP fetch failed: {e}. Trying cache.')
         cached = _load_cache().get('gsec_data')
         if cached:
+            _set_provenance('gsec_curve', 'cached', 'fallback_cache.json')
             return pd.DataFrame(cached)
         logging.warning('[MarketData] Cache miss. Using synthetic G-Sec fallback.')
+        _set_provenance('gsec_curve', 'synthetic', 'hardcoded')
         return pd.DataFrame({
             'tenor_label': GSEC_TENOR_LABELS,
             'tenor_years': GSEC_TENORS_YEARS,
@@ -475,18 +618,21 @@ def get_historical_mibor(n_days: int = 504, seed: int = 42) -> pd.DataFrame:
         result = pd.DataFrame({'date': series.index, 'mibor_rate': series.values})
         _save_cache('historical_mibor', result.assign(date=result['date'].astype(str)).to_dict('records'))
         logging.info(f'[MarketData] MIBOR history loaded from RBI DBIE: {len(result)} rows')
+        _set_provenance('mibor_history', 'live', 'RBI DBIE')
         return result
-    
+
     except Exception as e:
         logging.warning(f'[MarketData] MIBOR live fetch failed: {e}. Trying cache.')
-        
+
         cached = _load_cache().get('historical_mibor')
         if cached:
             df = pd.DataFrame(cached)
             df['date'] = pd.to_datetime(df['date'])
+            _set_provenance('mibor_history', 'cached', 'fallback_cache.json')
             return df.tail(n_days).reset_index(drop=True)
-        
+
         logging.warning('[MarketData] Cache miss. Falling back to synthetic MIBOR.')
+        _set_provenance('mibor_history', 'synthetic', 'Vasicek simulation')
         return _synthetic_mibor_fallback(n_days, seed)
 
 
@@ -503,11 +649,16 @@ def get_counterparty_data() -> pd.DataFrame:
     
     try:
         live_spreads = _fetch_fimmda_bond_zspread()
-        
+
         rows = []
+        matched = 0
         for cp in COUNTERPARTY_MASTER:
             name = cp['counterparty']
-            cds_bps = live_spreads.get(name, _RATING_SPREAD_LADDER.get(cp['rating'], 150))
+            if name in live_spreads:
+                cds_bps = live_spreads[name]
+                matched += 1
+            else:
+                cds_bps = _RATING_SPREAD_LADDER.get(cp['rating'], 150)
             fund_bps = cds_bps * 0.6
             rows.append({**cp,
                          'cds_spread_bps': cds_bps,
@@ -516,11 +667,17 @@ def get_counterparty_data() -> pd.DataFrame:
         
         df = pd.DataFrame(rows)
         _save_cache('counterparty_data', df.to_dict('records'))
+        # Only honestly "live" if real bond spreads actually matched a
+        # counterparty; otherwise every name fell back to the rating ladder.
+        if matched > 0:
+            _set_provenance('counterparty_credit', 'live', 'FIMMDA bond spreads')
+        else:
+            _set_provenance('counterparty_credit', 'synthetic', 'rating spread ladder')
         return df
-    
+
     except Exception as e:
         logging.warning(f'[MarketData] FIMMDA bond fetch failed: {e}. Using rating ladder.')
-        
+
         rows = []
         for cp in COUNTERPARTY_MASTER:
             cds_bps  = _RATING_SPREAD_LADDER.get(cp['rating'], 150)
@@ -529,6 +686,7 @@ def get_counterparty_data() -> pd.DataFrame:
                          'cds_spread_bps': float(cds_bps),
                          'recovery_rate': 0.40,
                          'funding_spread_bps': float(fund_bps)})
+        _set_provenance('counterparty_credit', 'synthetic', 'rating spread ladder')
         return pd.DataFrame(rows)
 
 
