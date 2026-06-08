@@ -421,7 +421,7 @@ _PAGE_LABELS = {
 # ── Deploy build stamp — BUMP THIS STRING ON EVERY PUSH ──────────────
 # If the sidebar/footer doesn't show this exact value on the cloud, the
 # deployment is NOT serving your latest commit (stuck build / wrong branch).
-BUILD_ID = "2026-06-07 · 2"
+BUILD_ID = "2026-06-08 · 1"
 
 with st.sidebar:
     st.markdown("""
