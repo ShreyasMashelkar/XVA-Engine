@@ -11,6 +11,7 @@ project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
+import io
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -421,7 +422,7 @@ _PAGE_LABELS = {
 # ── Deploy build stamp — BUMP THIS STRING ON EVERY PUSH ──────────────
 # If the sidebar/footer doesn't show this exact value on the cloud, the
 # deployment is NOT serving your latest commit (stuck build / wrong branch).
-BUILD_ID = "2026-06-08 · 1"
+BUILD_ID = "2026-06-08 · 2"
 
 with st.sidebar:
     st.markdown("""
@@ -556,14 +557,114 @@ def section_header(title: str, tooltip: str = ""):
     tip = f'<span class="bbg-tooltip">&nbsp;?&nbsp;<span class="bbg-tooltiptext">{tooltip}</span></span>' if tooltip else ""
     st.markdown(f'<div class="section-header">{title}{tip}</div>', unsafe_allow_html=True)
 
-def export_strip(label: str = ""):
+# Monotonic counter so every export_strip() on a page gets unique widget keys.
+_EXPORT_SEQ = {'n': 0}
+
+
+def _session_snapshot() -> dict:
+    """Default export payload: the live market context + selected risk inputs.
+
+    Used whenever a page calls export_strip() without passing its own data, so
+    the CSV/PDF buttons always export something real and relevant.
+    """
+    sections: dict = {}
+    try:
+        ois, gsec, _cptys, _port, policy = load_market_data()
+        sections['OIS Curve']    = ois
+        sections['G-Sec Curve']  = gsec
+        sections['Policy Rates'] = pd.DataFrame([policy])
+    except Exception:
+        pass
+    g = globals()
+    params = {k: g.get(k) for k in
+              ('cpty_selected', 'notional', 'fixed_rate', 'maturity',
+               'direction', 'n_paths', 'mean_rev', 'vol')
+              if g.get(k) is not None}
+    if params:
+        sections['Trade Parameters'] = pd.DataFrame([params])
+    if not sections:
+        sections['Export'] = pd.DataFrame({'note': ['No data available']})
+    return sections
+
+
+def _sections_to_csv(sections: dict) -> str:
+    """Flatten one or more named DataFrames into a single annotated CSV."""
+    parts = []
+    for name, df in sections.items():
+        parts.append(f"# {name}")
+        parts.append(df.to_csv(index=False).rstrip())
+        parts.append("")
+    return "\n".join(parts).strip() + "\n"
+
+
+@st.cache_data(show_spinner=False, max_entries=64)
+def _csv_to_pdf(csv_text: str, title: str) -> bytes:
+    """Render CSV content as a paginated monospace PDF (matplotlib = cloud-safe).
+
+    Cached on the CSV text so the PDF is only built once per unique dataset
+    rather than on every Streamlit rerun.
+    """
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    from matplotlib.backends.backend_pdf import PdfPages
+
+    lines = csv_text.splitlines() or ['(empty)']
+    per_page = 46
+    stamp = datetime.now().strftime('Generated %Y-%m-%d %H:%M IST')
+    buf = io.BytesIO()
+    with PdfPages(buf) as pdf:
+        for start in range(0, len(lines), per_page):
+            chunk = lines[start:start + per_page]
+            fig = plt.figure(figsize=(8.27, 11.69))  # A4 portrait
+            fig.patch.set_facecolor('white')
+            fig.text(0.06, 0.965, (title or 'XVA Engine Export'),
+                     fontsize=14, fontweight='bold', color='#cc5200')
+            fig.text(0.06, 0.945, stamp, fontsize=8, color='#555555')
+            fig.text(0.06, 0.915, "\n".join(chunk), fontsize=7,
+                     family='monospace', va='top')
+            pdf.savefig(fig)
+            plt.close(fig)
+    return buf.getvalue()
+
+
+def export_strip(data=None, filename: str = "xva_export", title: str = ""):
+    """Render working CSV + PDF download buttons plus a freshness badge.
+
+    `data` may be a DataFrame, a {section_name: DataFrame} dict, or None (in
+    which case the live session snapshot is exported).
+    """
+    if data is None:
+        sections = _session_snapshot()
+    elif isinstance(data, dict):
+        sections = data
+    else:
+        sections = {title or 'Data': data}
+
+    csv_text = _sections_to_csv(sections)
+    _EXPORT_SEQ['n'] += 1
+    key = f"exp{_EXPORT_SEQ['n']}"
     freshness = datetime.now().strftime("MKTDATA: %H:%M:%S IST")
-    st.markdown(f"""
-<div class="export-strip">
-  <button class="export-btn" onclick="alert('CSV export not implemented in demo')">CSV</button>
-  <button class="export-btn" onclick="alert('PDF export not implemented in demo')">PDF</button>
-  <span class="freshness-badge">{freshness}</span>
-</div>""", unsafe_allow_html=True)
+
+    c1, c2, c3 = st.columns([1, 1, 5])
+    with c1:
+        st.download_button("CSV", data=csv_text.encode('utf-8'),
+                           file_name=f"{filename}.csv", mime="text/csv",
+                           key=f"{key}_csv", use_container_width=True)
+    with c2:
+        try:
+            pdf_bytes = _csv_to_pdf(csv_text, title or filename)
+            st.download_button("PDF", data=pdf_bytes,
+                               file_name=f"{filename}.pdf", mime="application/pdf",
+                               key=f"{key}_pdf", use_container_width=True)
+        except Exception:
+            # PDF backend unavailable — degrade to CSV rather than a dead button.
+            st.download_button("PDF", data=csv_text.encode('utf-8'),
+                               file_name=f"{filename}.csv", mime="text/csv",
+                               key=f"{key}_pdf", use_container_width=True)
+    with c3:
+        st.markdown(f"<span class='freshness-badge'>{freshness}</span>",
+                    unsafe_allow_html=True)
 
 def _apply_bbg_chart(fig, title="", range_selector=False):
     """Apply Bloomberg Plotly layout to a figure in place."""
