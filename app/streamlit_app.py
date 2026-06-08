@@ -57,7 +57,6 @@ _css_path = os.path.join(os.path.dirname(__file__), "styles", "bloomberg_theme.c
 with open(_css_path) as _f:
     st.markdown(f"<style>{_f.read()}</style>", unsafe_allow_html=True)
 
-
 # ─────────────────────────────────────────────────────────────
 # Bloomberg Plotly theme
 # ─────────────────────────────────────────────────────────────
