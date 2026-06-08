@@ -154,6 +154,14 @@ def bbg_metric(*args, **kwargs):
     delta = args[2] if len(args) > 2 else kwargs.get("delta", None)
     accent = kwargs.get("accent", "amber")   # amber | blue | green | red
 
+    # Capture the metric for the active page's data export (best-effort).
+    try:
+        _EXPORT['metrics'].append(
+            {'metric': str(label), 'value': str(value),
+             'delta': '' if delta is None else str(delta)})
+    except Exception:
+        pass
+
     top_colors = {"amber": "#ff6600", "blue": "#00aaff", "green": "#00cc66", "red": "#cc2200"}
     top_color  = top_colors.get(accent, "#ff6600")
 
@@ -422,7 +430,7 @@ _PAGE_LABELS = {
 # ── Deploy build stamp — BUMP THIS STRING ON EVERY PUSH ──────────────
 # If the sidebar/footer doesn't show this exact value on the cloud, the
 # deployment is NOT serving your latest commit (stuck build / wrong branch).
-BUILD_ID = "2026-06-08 · 2"
+BUILD_ID = "2026-06-08 · 3"
 
 with st.sidebar:
     st.markdown("""
@@ -628,43 +636,148 @@ def _csv_to_pdf(csv_text: str, title: str) -> bytes:
     return buf.getvalue()
 
 
-def export_strip(data=None, filename: str = "xva_export", title: str = ""):
-    """Render working CSV + PDF download buttons plus a freshness badge.
+# ── Per-page export collection ─────────────────────────────────────────
+# export_strip() reserves the CSV/PDF buttons at the top of a page. As the
+# page then renders Plotly charts / tables / metrics, those are auto-captured
+# (via the wrappers below) into _EXPORT['sections']. flush_export() at the end
+# of the script binds that page-specific data to the buttons — so every page
+# exports exactly what it shows, not a shared snapshot.
+_EXPORT = {'slot': None, 'sections': {}, 'metrics': [], 'filename': 'xva_export', 'title': ''}
 
-    `data` may be a DataFrame, a {section_name: DataFrame} dict, or None (in
-    which case the live session snapshot is exported).
-    """
-    if data is None:
+
+def _slug(text: str) -> str:
+    out = ''.join(c.lower() if c.isalnum() else '_' for c in str(text))
+    while '__' in out:
+        out = out.replace('__', '_')
+    return out.strip('_') or 'export'
+
+
+def export_strip(filename: str = None, title: str = None):
+    """Reserve the page's CSV/PDF export buttons; data is bound at flush time."""
+    pg = globals().get('page', 'XVA Export')
+    _EXPORT['slot'] = st.empty()
+    _EXPORT['sections'] = {}
+    _EXPORT['metrics'] = []
+    _EXPORT['filename'] = filename or f"xva_{_slug(pg)}"
+    _EXPORT['title'] = title or pg
+    # Buttons are bound to the page's captured data by flush_export() at the
+    # end of the run; the reserved slot stays empty until then.
+
+
+def add_export(name, df):
+    """Register a DataFrame (or dict / Styler) for the current page's export."""
+    try:
+        if df is None:
+            return
+        if hasattr(df, 'data') and hasattr(df.data, 'to_csv'):   # pandas Styler
+            df = df.data
+        if hasattr(df, 'to_csv'):
+            _EXPORT['sections'][str(name)] = df
+        elif isinstance(df, dict):
+            _EXPORT['sections'][str(name)] = pd.DataFrame([df])
+    except Exception:
+        pass
+
+
+def _fig_to_frames(fig) -> dict:
+    """Extract each Plotly trace's plotted data into named DataFrames."""
+    frames = {}
+    try:
+        base = ''
+        if getattr(fig.layout, 'title', None) and fig.layout.title.text:
+            base = fig.layout.title.text
+    except Exception:
+        base = ''
+    base = base or 'Chart'
+    traces = list(getattr(fig, 'data', []) or [])
+    for i, tr in enumerate(traces[:12]):          # cap traces (e.g. MC path bundles)
+        name = (getattr(tr, 'name', None) or f'series{i+1}')
+        d = {}
+        for axis in ('x', 'y', 'z'):
+            v = getattr(tr, axis, None)
+            if v is not None and np.ndim(v) == 1 and len(v) > 0:
+                d[axis] = list(v)[:2000]              # cap rows
+        if not d:
+            continue
+        maxlen = max(len(v) for v in d.values())
+        for k in d:
+            if len(d[k]) < maxlen:
+                d[k] = list(d[k]) + [None] * (maxlen - len(d[k]))
+        key = f"{base} · {name}" if len(traces) > 1 else base
+        frames[key] = pd.DataFrame(d)
+    return frames
+
+
+def _register_fig(fig):
+    for name, frame in _fig_to_frames(fig).items():
+        uniq, n = name, 2
+        while uniq in _EXPORT['sections']:
+            uniq = f"{name} ({n})"; n += 1
+        _EXPORT['sections'][uniq] = frame
+
+
+def _render_export():
+    """Render (or re-render) the CSV/PDF buttons into the reserved slot."""
+    slot = _EXPORT['slot']
+    if slot is None:
+        return
+    sections = dict(_EXPORT['sections'])
+    if _EXPORT['metrics']:
+        sections = {'Key Metrics': pd.DataFrame(_EXPORT['metrics']), **sections}
+    if not sections:
         sections = _session_snapshot()
-    elif isinstance(data, dict):
-        sections = data
-    else:
-        sections = {title or 'Data': data}
 
     csv_text = _sections_to_csv(sections)
-    _EXPORT_SEQ['n'] += 1
-    key = f"exp{_EXPORT_SEQ['n']}"
+    title = _EXPORT['title']
+    filename = _EXPORT['filename']
     freshness = datetime.now().strftime("MKTDATA: %H:%M:%S IST")
 
-    c1, c2, c3 = st.columns([1, 1, 5])
-    with c1:
-        st.download_button("CSV", data=csv_text.encode('utf-8'),
-                           file_name=f"{filename}.csv", mime="text/csv",
-                           key=f"{key}_csv", use_container_width=True)
-    with c2:
-        try:
-            pdf_bytes = _csv_to_pdf(csv_text, title or filename)
-            st.download_button("PDF", data=pdf_bytes,
-                               file_name=f"{filename}.pdf", mime="application/pdf",
-                               key=f"{key}_pdf", use_container_width=True)
-        except Exception:
-            # PDF backend unavailable — degrade to CSV rather than a dead button.
-            st.download_button("PDF", data=csv_text.encode('utf-8'),
+    with slot.container():
+        c1, c2, c3 = st.columns([1, 1, 5])
+        with c1:
+            st.download_button("CSV", data=csv_text.encode('utf-8'),
                                file_name=f"{filename}.csv", mime="text/csv",
-                               key=f"{key}_pdf", use_container_width=True)
-    with c3:
-        st.markdown(f"<span class='freshness-badge'>{freshness}</span>",
-                    unsafe_allow_html=True)
+                               key="exp_csv", use_container_width=True)
+        with c2:
+            try:
+                pdf_bytes = _csv_to_pdf(csv_text, title)
+                st.download_button("PDF", data=pdf_bytes,
+                                   file_name=f"{filename}.pdf", mime="application/pdf",
+                                   key="exp_pdf", use_container_width=True)
+            except Exception:
+                st.download_button("PDF", data=csv_text.encode('utf-8'),
+                                   file_name=f"{filename}.csv", mime="text/csv",
+                                   key="exp_pdf", use_container_width=True)
+        with c3:
+            st.markdown(f"<span class='freshness-badge'>{freshness}</span>",
+                        unsafe_allow_html=True)
+
+
+def flush_export():
+    """Re-render the page's export buttons with all captured data. Called once
+    at the end of the script run."""
+    if _EXPORT['slot'] is not None:
+        _render_export()
+
+
+# Capture chart / table renders into the active page's export payload.
+_orig_plotly_chart = st.plotly_chart
+def _plotly_chart_capture(fig, *args, **kwargs):
+    try:
+        _register_fig(fig)
+    except Exception:
+        pass
+    return _orig_plotly_chart(fig, *args, **kwargs)
+st.plotly_chart = _plotly_chart_capture
+
+_orig_dataframe = st.dataframe
+def _dataframe_capture(data=None, *args, **kwargs):
+    try:
+        add_export(f"Table {len(_EXPORT['sections']) + 1}", data)
+    except Exception:
+        pass
+    return _orig_dataframe(data, *args, **kwargs)
+st.dataframe = _dataframe_capture
 
 def _apply_bbg_chart(fig, title="", range_selector=False):
     """Apply Bloomberg Plotly layout to a figure in place."""
@@ -699,6 +812,9 @@ credit_curve = CreditCurve(cpty_row['cds_spread_bps'], cpty_row['recovery_rate']
 
 # Swap pricer
 swap = SwapPricer(notional, fixed_rate, float(maturity), direction)
+
+# Reset the export slot each run; pages that call export_strip() set it again.
+_EXPORT['slot'] = None
 
 # ─────────────────────────────────────────────────────────────
 # PAGE 1: Single Trade Summary
@@ -3127,3 +3243,9 @@ elif page == "Hybrid Cross-Asset XVA":
                 f"that varies with the equity-rate correlation (ρ={h_corr:+.2f}). This is the "
                 f"capability that distinguishes a multi-asset XVA engine from asset-by-asset "
                 f"calculators.</div></div>", unsafe_allow_html=True)
+
+
+# ─────────────────────────────────────────────────────────────
+# Bind each page's captured charts / tables / metrics to its CSV/PDF buttons.
+# ─────────────────────────────────────────────────────────────
+flush_export()
