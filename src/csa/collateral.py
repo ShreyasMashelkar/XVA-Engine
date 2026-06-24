@@ -51,6 +51,41 @@ class CSAEngine:
         self.margin_frequency = margin_frequency
         self.independent_amount = independent_amount
 
+    @staticmethod
+    def mpor_aware_grid(base_grid: np.ndarray, mpor_days: int,
+                        refine: int = 1) -> np.ndarray:
+        """
+        Build a δ-spaced simulation grid for an *exact* MPoR close-out.
+
+        This is the exact close-out fix referenced by :meth:`_lagged_mtm`:
+        rather than interpolating the last-margined MTM at ``t-δ`` between
+        coarse reporting nodes (and variance-correcting the result), simulate
+        the exposure on a grid whose step is exactly the MPoR ``δ`` (optionally
+        sub-divided by ``refine``). Then for every node ``t`` the lookback
+        ``t-δ`` lands on a genuine simulated node exactly ``refine`` steps back,
+        the diffusion correction in ``_lagged_mtm`` becomes an exact no-op
+        (scale ≡ 1) and no coarse-grid warning is raised.
+
+        The horizon is snapped to the nearest whole multiple of the step so the
+        final node also has an exact δ-lookback.
+
+        Args:
+            base_grid: Reporting grid whose last point sets the horizon (years).
+            mpor_days: Margin Period of Risk in business days (δ = days/252).
+            refine:    Sub-steps per MPoR window (≥1); step = δ/refine.
+
+        Returns:
+            Uniform grid ``[0, k·step, …]`` with ``step = δ/refine``.
+        """
+        base = np.asarray(base_grid, dtype=float)
+        horizon = float(base[-1])
+        delta = max(mpor_days, 0) / 252.0
+        if delta <= 0.0 or horizon <= 0.0:
+            return np.unique(base[base >= 0.0])
+        step = delta / max(int(refine), 1)
+        n = max(int(round(horizon / step)), 1)
+        return np.arange(n + 1, dtype=float) * step
+
     def _lagged_mtm(self, mtm_paths: np.ndarray,
                     time_grid: np.ndarray) -> np.ndarray:
         """
@@ -108,9 +143,12 @@ class CSAEngine:
         scale = np.sqrt(np.maximum(local_dt / mpor_years, 1.0))   # ≥ 1
         # Lookback within the bracketing step (the typical coarse-grid case)
         # gets the correction; multi-step lookbacks already carry real
-        # diffusion, so leave them untouched.
+        # diffusion, so leave them untouched. A lookback that lands *exactly*
+        # on a node (frac ≈ 0 or 1 — e.g. an MPoR-aware simulation grid) is a
+        # genuine simulated δ-move, so it needs no correction either.
         within_step = lo == (np.arange(n_time) - 1)
-        scale = np.where(within_step, scale, 1.0)
+        on_node = (frac <= 1e-9) | (frac >= 1.0 - 1e-9)
+        scale = np.where(within_step & ~on_node, scale, 1.0)
 
         gap = mtm_paths - lagged                  # MTM(t) - MTM(t-δ), per path
         lagged_corr = mtm_paths - gap * scale     # = lagged when scale == 1

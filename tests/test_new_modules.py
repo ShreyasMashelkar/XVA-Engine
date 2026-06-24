@@ -76,6 +76,32 @@ class TestFRTBCVA:
         )
         assert result['K_IR_delta'] >= 0
 
+    def test_ir_delta_full_tenor_vertices(self):
+        """IR delta accepts the full FRTB GIRR vertex set (not 3 buckets)."""
+        from src.sa_ccr.frtb_cva import FRTBCVAEngine, IR_DELTA_TENORS
+        engine = FRTBCVAEngine()
+        # Per-vertex IR01 keyed by the standard FRTB tenors.
+        sens = {1.0: 0.002, 2.0: 0.003, 5.0: 0.004, 10.0: 0.003, 30.0: 0.001}
+        result = engine.compute_ir_delta_capital({'HDFC': sens})
+        assert result['n_tenor_vertices'] == 10
+        assert len(IR_DELTA_TENORS) == 10
+        assert result['K_IR_delta'] > 0
+        # Per-vertex breakdown is exposed and preserves the input sensitivities.
+        assert result['IR01_by_tenor'][5.0] == pytest.approx(0.004)
+        # Legacy aggregates still reported.
+        assert result['IR01_short'] == pytest.approx(0.002)   # 1Y
+        assert result['IR01_long'] == pytest.approx(0.004)    # 10Y+30Y
+
+    def test_ir_tenor_corr_formula(self):
+        """Tenor correlation follows the FRTB max(exp(-θΔ/min),0.4) rule."""
+        from src.sa_ccr.frtb_cva import ir_tenor_corr
+        import numpy as np
+        assert ir_tenor_corr(5.0, 5.0) == 1.0
+        # Decreasing in separation, floored at 40%.
+        assert ir_tenor_corr(1.0, 2.0) > ir_tenor_corr(1.0, 30.0)
+        assert ir_tenor_corr(0.25, 30.0) == pytest.approx(0.40)
+        assert ir_tenor_corr(1.0, 3.0) == pytest.approx(np.exp(-0.03 * 2 / 1))
+
     def test_from_eod_report(self):
         import pandas as pd
         from src.sa_ccr.frtb_cva import FRTBCVAEngine

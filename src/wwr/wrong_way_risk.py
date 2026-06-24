@@ -248,7 +248,9 @@ def run_wwr_stress_scenarios(ois_curve: OISCurve,
         # Simple MTM approximation for comparison
         # Use rate paths to generate approximate swap MTM
         from src.montecarlo.hull_white import HullWhite1F
-        hw = HullWhite1F(ois_curve)
+        # Multi-curve: project the float leg off an OIS+basis MIBOR curve so the
+        # WWR comparison is consistent with the production exposure engine.
+        hw = HullWhite1F(ois_curve, basis_bps=25.0)
         mtm_paths = hw.compute_swap_mtm_paths(
             sim['time_grid'], sim['rate_paths'],
             notional=500.0, fixed_rate=0.07, maturity=5.0,

@@ -39,7 +39,7 @@ class HullWhite1F:
     """
 
     def __init__(self, curve: OISCurve, a: float = 0.10,
-                 sigma: float = 0.01):
+                 sigma: float = 0.01, basis_bps: float = 0.0):
         """
         Initialise the HW1F model.
 
@@ -47,10 +47,17 @@ class HullWhite1F:
             curve: Current OIS curve (used for θ(t) calibration).
             a: Mean reversion speed (typical INR: 0.05–0.20).
             sigma: Short rate volatility (typical INR: 0.005–0.015).
+            basis_bps: OIS–MIBOR projection basis in bps. When > 0 and no
+                explicit ``projection_curve`` is supplied to
+                ``compute_swap_mtm_paths``, the float leg is projected off an
+                ``OIS + basis`` MIBOR curve instead of collapsing to the
+                basis-blind single-curve telescoping shortcut. Set to 0.0 to
+                reproduce the legacy single-curve behaviour exactly.
         """
         self.curve = curve
         self.a = a
         self.sigma = sigma
+        self.basis_bps = basis_bps
 
     def _theta(self, t: float, dt: float = 1/365) -> float:
         """
@@ -84,7 +91,9 @@ class HullWhite1F:
     def simulate_rates(self, n_paths: int = 1000,
                        n_steps: int = 60, horizon: float = 5.0,
                        seed: int = 42,
-                       antithetic: bool = True) -> Tuple[np.ndarray, np.ndarray]:
+                       antithetic: bool = True,
+                       time_grid: Optional[np.ndarray] = None
+                       ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Simulate short rate paths using exact transition density.
         Uses antithetic variates by default for variance reduction.
@@ -95,27 +104,41 @@ class HullWhite1F:
             horizon: Simulation horizon in years.
             seed: Random seed for reproducibility.
             antithetic: Boolean flag for antithetic variates.
+            time_grid: Optional explicit (possibly non-uniform) time grid. When
+                supplied it overrides ``n_steps``/``horizon`` — used to drop an
+                exact node at each ``t - MPoR`` so collateralised close-out is
+                read off genuine simulated nodes rather than interpolated. See
+                :func:`src.csa.collateral.CSAEngine.mpor_aware_grid`. The exact
+                OU transition uses each step's own ``dt`` so a non-uniform grid
+                is simulated without bias.
 
         Returns:
             Tuple of (time_grid, rate_paths).
         """
         rng = np.random.default_rng(seed)
 
-        dt = horizon / n_steps
-        time_grid = np.linspace(0, horizon, n_steps + 1)
+        if time_grid is None:
+            time_grid = np.linspace(0, horizon, n_steps + 1)
+        else:
+            time_grid = np.asarray(time_grid, dtype=float)
+        n_steps = len(time_grid) - 1
+
+        # Per-step Δt — supports a non-uniform (e.g. MPoR-aware) grid. For a
+        # uniform grid every dt_i is identical, recovering the original result.
+        dt_steps = np.diff(time_grid)
 
         # Simulate exact mean-reverting process x(t)
         # dx(t) = -a * x(t) dt + sigma * dW(t)
         x = np.zeros((n_paths, n_steps + 1))
-        
+
         if self.a > 1e-8:
-            variance_dt = (self.sigma ** 2) * (1 - np.exp(-2 * self.a * dt)) / (2 * self.a)
-            decay = np.exp(-self.a * dt)
+            variance_steps = (self.sigma ** 2) * (1 - np.exp(-2 * self.a * dt_steps)) / (2 * self.a)
+            decay_steps = np.exp(-self.a * dt_steps)
         else:
-            variance_dt = (self.sigma ** 2) * dt
-            decay = 1.0
-            
-        std_dt = np.sqrt(variance_dt)
+            variance_steps = (self.sigma ** 2) * dt_steps
+            decay_steps = np.ones_like(dt_steps)
+
+        std_steps = np.sqrt(variance_steps)
         # Generate standard normal increments
         if antithetic:
             n_half = (n_paths + 1) // 2
@@ -123,9 +146,9 @@ class HullWhite1F:
             Z = np.concatenate([Z_half, -Z_half], axis=0)[:n_paths]
         else:
             Z = rng.standard_normal((n_paths, n_steps))
-        
+
         for i in range(n_steps):
-            x[:, i + 1] = x[:, i] * decay + std_dt * Z[:, i]
+            x[:, i + 1] = x[:, i] * decay_steps[i] + std_steps[i] * Z[:, i]
 
         rates = np.zeros_like(x)
         for i, t in enumerate(time_grid):
@@ -220,8 +243,17 @@ class HullWhite1F:
                 df_j = P(t, T)
                 fixed_pv += fixed_rate * notional * deltas[j] * df_j
 
-            if projection_curve is None:
-                # Single-curve shortcut
+            # Resolve the float-leg projection curve. Production paths pass an
+            # explicit MIBOR projection curve; if none is given we fall back to
+            # an OIS+basis curve when a basis is configured, so the float leg
+            # never silently ignores the OIS–MIBOR basis. Only basis_bps == 0
+            # collapses to the legacy single-curve telescoping shortcut.
+            proj = projection_curve
+            if proj is None and getattr(self, 'basis_bps', 0.0):
+                proj = self.curve.shift(self.basis_bps)
+
+            if proj is None:
+                # Single-curve shortcut (basis-blind; legacy fallback only)
                 df_start = np.ones(n_paths)
                 df_end = P(t, t + remaining)
                 float_pv = notional * (df_start - df_end)
@@ -232,7 +264,7 @@ class HullWhite1F:
                     T1 = t + dates_with_start[j]
                     T2 = t + T_pay
                     # Forward rate implied from the PROJECTION curve
-                    fwd = projection_curve.forward_rate(T1, T2)
+                    fwd = proj.forward_rate(T1, T2)
                     df_j = P(t, T2)
                     float_pv += notional * fwd * deltas[j] * df_j
 
@@ -311,7 +343,8 @@ def run_exposure_simulation(curve: OISCurve,
                             n_steps: int = 60,
                             a: float = 0.10,
                             sigma: float = 0.01,
-                            seed: int = 42) -> Dict:
+                            seed: int = 42,
+                            basis_bps: float = 25.0) -> Dict:
     """
     Convenience function: run a full exposure simulation for a single swap.
 
@@ -326,11 +359,14 @@ def run_exposure_simulation(curve: OISCurve,
         a: HW1F mean reversion speed.
         sigma: HW1F short rate volatility.
         seed: Random seed.
+        basis_bps: OIS–MIBOR projection basis (bps). Defaults to 25bps so the
+            float leg is projected multi-curve; pass 0.0 for the legacy
+            single-curve shortcut.
 
     Returns:
         Dictionary with exposure metrics and paths.
     """
-    model = HullWhite1F(curve, a=a, sigma=sigma)
+    model = HullWhite1F(curve, a=a, sigma=sigma, basis_bps=basis_bps)
 
     time_grid, rate_paths = model.simulate_rates(
         n_paths=n_paths, n_steps=n_steps,

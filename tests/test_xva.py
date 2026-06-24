@@ -229,10 +229,23 @@ class TestFVAEngine:
         assert fba > 0
 
     def test_fva_components(self, ois_curve, ee_profile, ene_profile, time_grid):
-        """FVA should equal FCA + FBA."""
-        engine = FVAEngine(ois_curve, funding_spread_bps=50)
+        """Gross FVA equals FCA + FBA; the overlap-aware total excludes FBA."""
+        # Gross convention (FBA not netted against DVA)
+        gross = FVAEngine(ois_curve, funding_spread_bps=50, avoid_dva_overlap=False)
+        r = gross.compute_fva(ee_profile, ene_profile, time_grid)
+        assert abs(r['FVA'] - (r['FCA'] + r['FBA'])) < 1e-10
+
+    def test_fva_dva_overlap_excluded(self, ois_curve, ee_profile, ene_profile, time_grid):
+        """When DVA is booked, FBA is excluded from FVA to avoid double-counting."""
+        engine = FVAEngine(ois_curve, funding_spread_bps=50)  # defaults: DVA booked
         result = engine.compute_fva(ee_profile, ene_profile, time_grid)
-        assert abs(result['FVA'] - (result['FCA'] + result['FBA'])) < 1e-10
+        assert result['dva_overlap_adjusted'] is True
+        # FBA still reported gross for transparency, but excluded from the total
+        assert result['FBA'] > 0
+        assert abs(result['FVA'] - result['FCA']) < 1e-10
+        assert abs(result['FBA_DVA_overlap_excluded'] - result['FBA']) < 1e-10
+        # Gross total is recoverable
+        assert abs(result['FVA_gross'] - (result['FCA'] + result['FBA'])) < 1e-10
 
     def test_wider_spread_larger_fca(self, ois_curve, ee_profile, time_grid):
         """Wider funding spread → larger FCA magnitude."""

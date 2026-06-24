@@ -60,24 +60,50 @@ CS_CROSS_BUCKET_CORR = {
 }
 
 # IR delta risk weights for SA-CVA (basis points per 1bp sensitivity)
-# By tenor bucket (same as SA-CCR maturity buckets)
+# By legacy 3-bucket maturity grouping (kept for backward compatibility)
 IR_RISK_WEIGHTS = {
     'short': 1.70,   # <1Y: 170bps
     'medium': 1.28,  # 1-5Y: 128bps
-    'long': 1.28,    # >5Y: 128bps (simplified — full FRTB has 12 tenors)
+    'long': 1.28,    # >5Y: 128bps
 }
 
-# Correlation between IR tenor buckets for CVA capital
+# ── Full FRTB GIRR delta tenor vertices (BIS MAR21.42 / d457 SA-CVA) ─────────
+# The SA-CVA interest-rate risk class is bucketed by the standard FRTB
+# Girr-delta term-structure vertices, not 3 coarse maturity buckets. Risk
+# weights follow the regulatory term structure (high at the short end,
+# flattening from 5y out); levels are kept on the same scale as the legacy
+# 3-bucket weights so capital magnitudes stay comparable.
+IR_DELTA_TENORS = [0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0, 15.0, 20.0, 30.0]
+IR_VERTEX_RW = {
+    0.25: 1.70, 0.5: 1.70, 1.0: 1.70,   # short end (≤1Y): 170bps
+    2.0: 1.28, 3.0: 1.28, 5.0: 1.28,    # belly (1–5Y): 128bps
+    10.0: 1.28, 15.0: 1.28, 20.0: 1.28, 30.0: 1.28,   # long end (>5Y): 128bps
+}
+# Map the legacy 3 buckets onto representative vertices so old-style inputs
+# {'short','medium','long'} still aggregate correctly through the vertex model.
+_LEGACY_BUCKET_TENOR = {'short': 1.0, 'medium': 3.0, 'long': 10.0}
+
+# FRTB delta tenor correlation (BIS MAR21.46): a smooth term-structure
+# correlation that replaces the three hand-coded bucket correlations.
+_GIRR_THETA = 0.03
+
+
+def ir_tenor_corr(t_k: float, t_l: float) -> float:
+    """FRTB GIRR-delta tenor correlation ρ_kl = max(exp(-θ·|t_k-t_l|/min), 40%)."""
+    if t_k == t_l:
+        return 1.0
+    lo = min(t_k, t_l)
+    if lo <= 0:
+        return 0.4
+    return max(float(np.exp(-_GIRR_THETA * abs(t_k - t_l) / lo)), 0.40)
+
+
+# Legacy 3-bucket correlation table (retained; derived from ir_tenor_corr at
+# the representative vertices for any code that still references it).
 IR_TENOR_CORR = {
-    ('short', 'short'): 1.00,
-    ('short', 'medium'): 0.91,
-    ('short', 'long'): 0.72,
-    ('medium', 'short'): 0.91,
-    ('medium', 'medium'): 1.00,
-    ('medium', 'long'): 0.87,
-    ('long', 'short'): 0.72,
-    ('long', 'medium'): 0.87,
-    ('long', 'long'): 1.00,
+    (b1, b2): (1.0 if b1 == b2 else
+               ir_tenor_corr(_LEGACY_BUCKET_TENOR[b1], _LEGACY_BUCKET_TENOR[b2]))
+    for b1 in _LEGACY_BUCKET_TENOR for b2 in _LEGACY_BUCKET_TENOR
 }
 
 # Correlation between CS and IR risk classes (cross-risk class, BIS §4.30)
@@ -211,36 +237,60 @@ class FRTBCVAEngine:
         the yield curve. Units: ₹ Crores per bp.
 
         Args:
-            counterparty_ir01: Dict of counterparty → {maturity_bucket: IR01}
-                e.g., {'HDFC': {'short': 0.002, 'medium': 0.015, 'long': 0.008}}
+            counterparty_ir01: Dict of counterparty → {tenor: IR01}. Tenor keys
+                may be either the full FRTB GIRR vertices
+                (0.25/0.5/1/2/3/5/10/15/20/30, as floats or strings) or the
+                legacy 3 buckets {'short','medium','long'} — legacy keys are
+                mapped onto representative vertices (1Y/3Y/10Y).
+                e.g., {'HDFC': {1.0: 0.002, 5.0: 0.015, 10.0: 0.008}}
 
         Returns:
-            Dict with aggregated IR delta capital.
+            Dict with aggregated IR delta capital, including the full per-vertex
+            IR01 breakdown and the legacy short/medium/long aggregates.
         """
-        # Aggregate IR01 across all counterparties per tenor bucket
-        bucket_ir01 = {'short': 0.0, 'medium': 0.0, 'long': 0.0}
-        for cpty, ir01_by_bucket in counterparty_ir01.items():
-            for bucket, ir01 in ir01_by_bucket.items():
-                bucket_ir01[bucket] += abs(ir01)
+        # Aggregate IR01 across all counterparties onto the FRTB vertex grid.
+        vertex_ir01 = {t: 0.0 for t in IR_DELTA_TENORS}
+        for cpty, ir01_by_tenor in counterparty_ir01.items():
+            for key, ir01 in ir01_by_tenor.items():
+                tenor = self._normalise_tenor(key)
+                vertex_ir01[tenor] += abs(ir01)
 
-        # Apply IR risk weights
-        ws = {b: IR_RISK_WEIGHTS[b] * bucket_ir01[b] for b in bucket_ir01}
+        # Weighted sensitivities WS_k = RW_k · s_k
+        ws = {t: IR_VERTEX_RW[t] * vertex_ir01[t] for t in IR_DELTA_TENORS}
 
-        # Aggregate with correlation matrix
-        buckets = ['short', 'medium', 'long']
+        # Bucket aggregation K_b = sqrt(ΣΣ ρ_kl · WS_k · WS_l) over all vertices
         variance = 0.0
-        for b1 in buckets:
-            for b2 in buckets:
-                rho = IR_TENOR_CORR[(b1, b2)]
-                variance += rho * ws[b1] * ws[b2]
+        for t_k in IR_DELTA_TENORS:
+            for t_l in IR_DELTA_TENORS:
+                variance += ir_tenor_corr(t_k, t_l) * ws[t_k] * ws[t_l]
 
         k_ir = np.sqrt(max(variance, 0.0))
+
+        # Legacy short/medium/long aggregates (<1Y / 1–5Y / >5Y) for compat.
+        short = sum(vertex_ir01[t] for t in IR_DELTA_TENORS if t < 1.0 + 1e-9)
+        medium = sum(vertex_ir01[t] for t in IR_DELTA_TENORS if 1.0 + 1e-9 < t <= 5.0 + 1e-9)
+        long = sum(vertex_ir01[t] for t in IR_DELTA_TENORS if t > 5.0 + 1e-9)
+
         return {
-            'IR01_short': bucket_ir01['short'],
-            'IR01_medium': bucket_ir01['medium'],
-            'IR01_long': bucket_ir01['long'],
+            'IR01_short': short,
+            'IR01_medium': medium,
+            'IR01_long': long,
+            'IR01_by_tenor': vertex_ir01,
+            'n_tenor_vertices': len(IR_DELTA_TENORS),
             'K_IR_delta': k_ir,
         }
+
+    @staticmethod
+    def _normalise_tenor(key) -> float:
+        """Map an IR01 tenor key (legacy label, str, or float) to a FRTB vertex."""
+        if isinstance(key, str):
+            k = key.strip().lower()
+            if k in _LEGACY_BUCKET_TENOR:
+                return _LEGACY_BUCKET_TENOR[k]
+            key = float(k.replace('y', ''))
+        t = float(key)
+        # Snap to the nearest standard FRTB vertex.
+        return min(IR_DELTA_TENORS, key=lambda v: abs(v - t))
 
     def compute_sa_cva_capital(
         self,

@@ -145,3 +145,106 @@ class EquityGBM:
         T = max(float(time_grid[-1]), 1e-8)
         epe = float(np.dot(ee, dt) / T)
         return {'time_grid': time_grid, 'EE': ee, 'ENE': ene, 'PFE': pfe, 'EPE': epe}
+
+
+class EquityHeston(EquityGBM):
+    """
+    Stochastic-volatility (Heston) index simulator — a drop-in for EquityGBM.
+
+    This wires the Heston model (``src/pricing/heston.py``) into the equity
+    exposure engine, closing the "Heston is unwired" gap. Two things change
+    relative to GBM:
+
+    1. **Spot dynamics.** Paths are generated with the Andersen (2008) QE
+       scheme, so variance is itself a mean-reverting stochastic process
+       correlated with the spot. Exposure therefore picks up genuine
+       vol-of-vol and forward-smile tail risk that GBM cannot represent.
+
+    2. **Dynamic smile.** Options are repriced along each path at the path's
+       *own* simulated instantaneous vol √v(t), rather than a frozen quadratic
+       smile — the smile evolves with the state, which is the whole point of a
+       stochastic-vol model.
+
+    The Heston parameters can be calibrated to the existing quadratic vol smile
+    with :meth:`from_smile` — no market data beyond the smile already in use.
+    """
+
+    def __init__(self, spot: float, params: 'HestonParams', div_yield: float = 0.0):
+        super().__init__(spot, vol=float(np.sqrt(max(params.v0, 1e-8))),
+                         div_yield=div_yield)
+        self.params = params
+        self._variance: Optional[np.ndarray] = None
+        self.calibration_rmse: Optional[float] = None
+
+    @classmethod
+    def from_smile(cls, spot: float, smile: EquityVolSmile, expiry: float,
+                   r: float, div_yield: float = 0.0,
+                   n_strikes: int = 11) -> 'EquityHeston':
+        """
+        Calibrate Heston (v0, κ, θ, ξ, ρ) to an existing quadratic vol smile.
+
+        Builds a synthetic implied-vol chain by sampling the smile across
+        strikes and fits the Heston parameters to it, so the static smile is
+        turned into consistent stochastic-vol dynamics. No external data.
+        """
+        import pandas as pd
+        from src.pricing.heston import calibrate_heston
+        fwd = spot * np.exp((r - div_yield) * max(expiry, 1e-6))
+        strikes = np.linspace(0.80, 1.20, n_strikes) * spot
+        vols = [smile.vol(float(k), fwd) for k in strikes]
+        chain = pd.DataFrame({'strike': strikes, 'implied_vol': vols})
+        params, rmse = calibrate_heston(chain, spot, max(expiry, 1e-6), r, div_yield)
+        obj = cls(spot, params, div_yield)
+        obj.calibration_rmse = rmse
+        return obj
+
+    def simulate(self, time_grid: np.ndarray, n_paths: int,
+                 ois_curve: OISCurve,
+                 equity_normals: Optional[np.ndarray] = None,
+                 seed: int = 42) -> np.ndarray:
+        """
+        Simulate spot paths under Heston QE and cache the variance paths.
+
+        The QE scheme uses a flat risk-neutral rate; we anchor it to the curve
+        zero rate over the horizon (per-step curve drift is a GBM-only
+        feature). ``equity_normals`` is accepted for interface compatibility
+        but the Heston scheme draws its own correlated (spot, vol) shocks.
+        """
+        from src.pricing.heston import simulate_heston_qe
+        tg = np.asarray(time_grid, dtype=float)
+        T = float(tg[-1])
+        r = ois_curve.zero_rate(T) if T > 1e-6 else 0.0
+        sim = simulate_heston_qe(self.spot, r, self.q, tg, self.params,
+                                 n_paths=n_paths, seed=seed)
+        self._variance = sim['variance']
+        return sim['spot']
+
+    def option_mtm_paths(self, spot_paths: np.ndarray, time_grid: np.ndarray,
+                         ois_curve: OISCurve, strike: float, maturity: float,
+                         units: float, call: bool = True,
+                         smile: Optional[EquityVolSmile] = None) -> np.ndarray:
+        """
+        Reprice the option along each path at its own stochastic vol √v(t).
+
+        Falls back to the GBM/smile repricing if no variance has been cached
+        (i.e. :meth:`simulate` has not been called on this instance).
+        """
+        if self._variance is None:
+            return super().option_mtm_paths(spot_paths, time_grid, ois_curve,
+                                            strike, maturity, units, call, smile)
+        n_paths, n_time = spot_paths.shape
+        mtm = np.zeros((n_paths, n_time))
+        for ti in range(n_time):
+            t = time_grid[ti]
+            tau = max(maturity - t, 0.0)
+            r_t = ois_curve.zero_rate(maturity) if maturity > 1e-6 else 0.0
+            S_t = spot_paths[:, ti]
+            if tau <= 0:
+                payoff = np.maximum(S_t - strike, 0.0) if call \
+                    else np.maximum(strike - S_t, 0.0)
+                mtm[:, ti] = units * payoff
+            else:
+                vol_t = np.sqrt(np.maximum(self._variance[:, ti], 1e-8))
+                mtm[:, ti] = units * bsm_price(S_t, strike, tau, r_t, self.q,
+                                               vol_t, call)
+        return mtm

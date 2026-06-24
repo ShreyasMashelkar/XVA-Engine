@@ -95,6 +95,49 @@ class TestEquityMC:
         assert em['EPE'] > 0
 
 
+class TestEquityHeston:
+    """Heston stochastic-vol is wired into the equity exposure engine (#7)."""
+
+    def test_heston_martingale(self, ois_curve, equity_md):
+        from src.montecarlo.equity_mc import EquityHeston
+        from src.pricing.heston import HestonParams
+        p = HestonParams(v0=0.04, kappa=2.0, theta=0.04, xi=0.5, rho=-0.6)
+        hes = EquityHeston(equity_md['spot'], p, equity_md['div_yield'])
+        tg = np.linspace(0, 1, 53)
+        S = hes.simulate(tg, 8000, ois_curve, seed=42)
+        # variance paths are cached and non-negative (QE keeps v ≥ 0)
+        assert hes._variance.shape == S.shape
+        assert np.all(hes._variance >= -1e-12)
+        r1 = ois_curve.zero_rate(1.0)
+        disc_S = S[:, -1].mean() * np.exp(-r1 * 1.0)
+        target = equity_md['spot'] * np.exp(-equity_md['div_yield'] * 1.0)
+        assert abs(disc_S - target) / target < 0.05
+
+    def test_calibrates_to_smile(self, ois_curve, equity_md):
+        from src.montecarlo.equity_mc import EquityHeston
+        from src.pricing.equity_options import EquityVolSmile
+        smile = EquityVolSmile(atm_vol=equity_md['atm_vol'], skew=-0.18, curv=0.6)
+        T = 0.5
+        r = ois_curve.zero_rate(T)
+        hes = EquityHeston.from_smile(equity_md['spot'], smile, T, r,
+                                      equity_md['div_yield'])
+        # Smile fit is reasonable (RMSE in vol points should be small).
+        assert hes.calibration_rmse < 0.02
+
+    def test_option_exposure_uses_stochastic_vol(self, ois_curve, equity_md):
+        from src.montecarlo.equity_mc import EquityHeston
+        from src.pricing.heston import HestonParams
+        p = HestonParams(v0=0.04, kappa=2.0, theta=0.04, xi=0.6, rho=-0.6)
+        hes = EquityHeston(equity_md['spot'], p, equity_md['div_yield'])
+        tg = np.linspace(0, 1, 27)
+        S = hes.simulate(tg, 3000, ois_curve, seed=1)
+        mtm = hes.option_mtm_paths(S, tg, ois_curve, equity_md['spot'], 1.0,
+                                   units=500, call=True)
+        em = hes.exposure_metrics(mtm, tg)
+        assert np.all(em['EE'] >= -1e-9)
+        assert em['EPE'] > 0
+
+
 # ── Hybrid cross-asset XVA ───────────────────────────────────────────────────
 
 class TestHybridXVA:

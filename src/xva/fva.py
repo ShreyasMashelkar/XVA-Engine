@@ -60,7 +60,9 @@ class FVAEngine:
     def __init__(self, ois_curve: OISCurve,
                  funding_spread_bps: float = 40.0,
                  bank_credit_curve: Optional[CreditCurve] = None,
-                 cpty_credit_curve: Optional[CreditCurve] = None):
+                 cpty_credit_curve: Optional[CreditCurve] = None,
+                 dva_booked: bool = True,
+                 avoid_dva_overlap: bool = True):
         """
         Initialise the FVA engine.
 
@@ -69,11 +71,24 @@ class FVAEngine:
             funding_spread_bps: Funding spread over OIS in basis points.
             bank_credit_curve: Bank's own credit curve.
             cpty_credit_curve: Counterparty credit curve.
+            dva_booked: Whether the desk separately books DVA (own-credit
+                benefit on negative MTM). The app reports DVA, so this defaults
+                to True.
+            avoid_dva_overlap: When True (default) and ``dva_booked`` is set,
+                the Funding Benefit Adjustment (FBA) is excluded from the total
+                FVA to avoid double-counting the liability-side benefit that
+                DVA already captures. FBA and DVA are economically the same
+                cash-flow claim — both monetise the bank's negative exposure
+                via its own credit/funding spread — so booking both
+                overstates the benefit. Set False to recover the gross
+                FCA+FBA convention.
         """
         self.ois_curve = ois_curve
         self.funding_spread = funding_spread_bps / 10000.0
         self.bank_credit_curve = bank_credit_curve
         self.cpty_credit_curve = cpty_credit_curve
+        self.dva_booked = dva_booked
+        self.avoid_dva_overlap = avoid_dva_overlap
 
     def compute_fca(self, ee_profile: np.ndarray,
                     time_grid: np.ndarray) -> float:
@@ -151,12 +166,25 @@ class FVAEngine:
             Dictionary with FCA, FBA, and total FVA.
         """
         fca = self.compute_fca(ee_profile, time_grid)
-        fba = self.compute_fba(ene_profile, time_grid)
+        fba_gross = self.compute_fba(ene_profile, time_grid)
+
+        # FVA/DVA overlap: FBA and DVA both monetise the bank's negative
+        # exposure through its own spread, so booking both double-counts the
+        # benefit. When DVA is separately booked (the app's default), drop FBA
+        # from the FVA total and surface the suppressed amount explicitly.
+        overlap_adjustment = (self.avoid_dva_overlap and self.dva_booked)
+        fba_booked = 0.0 if overlap_adjustment else fba_gross
 
         return {
             'FCA': fca,
-            'FBA': fba,
-            'FVA': fca + fba,
+            # FBA reported gross as a standalone component for transparency, but
+            # excluded from the FVA *total* below when it overlaps with DVA.
+            'FBA': fba_gross,
+            'FBA_booked': fba_booked,
+            'FBA_DVA_overlap_excluded': fba_gross if overlap_adjustment else 0.0,
+            'FVA': fca + fba_booked,
+            'FVA_gross': fca + fba_gross,
+            'dva_overlap_adjusted': overlap_adjustment,
             'funding_spread_bps': self.funding_spread * 10000,
         }
 

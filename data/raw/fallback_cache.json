@@ -3,27 +3,27 @@
     {
       "tenor_label": "O/N",
       "tenor_years": 0.0027397260273972603,
-      "ois_rate": 0.0538
+      "ois_rate": 0.0528
     },
     {
       "tenor_label": "1W",
       "tenor_years": 0.019178082191780823,
-      "ois_rate": 0.053886426592797784
+      "ois_rate": 0.05295290858725762
     },
     {
       "tenor_label": "2W",
       "tenor_years": 0.038356164383561646,
-      "ois_rate": 0.05398725761772853
+      "ois_rate": 0.05313130193905817
     },
     {
       "tenor_label": "1M",
       "tenor_years": 0.08333333333333333,
-      "ois_rate": 0.05422373037857802
+      "ois_rate": 0.053549676823638044
     },
     {
       "tenor_label": "2M",
       "tenor_years": 0.16666666666666666,
-      "ois_rate": 0.05466186518928901
+      "ois_rate": 0.05432483841181902
     },
     {
       "tenor_label": "3M",
@@ -48,32 +48,32 @@
     {
       "tenor_label": "2Y",
       "tenor_years": 2.0,
-      "ois_rate": 0.059977777777777776
+      "ois_rate": 0.05996666666666667
     },
     {
       "tenor_label": "3Y",
       "tenor_years": 3.0,
-      "ois_rate": 0.06065555555555555
+      "ois_rate": 0.06063333333333333
     },
     {
       "tenor_label": "4Y",
       "tenor_years": 4.0,
-      "ois_rate": 0.06133333333333333
+      "ois_rate": 0.0613
     },
     {
       "tenor_label": "5Y",
       "tenor_years": 5.0,
-      "ois_rate": 0.06201111111111111
+      "ois_rate": 0.06196666666666666
     },
     {
       "tenor_label": "7Y",
       "tenor_years": 7.0,
-      "ois_rate": 0.06336666666666667
+      "ois_rate": 0.0633
     },
     {
       "tenor_label": "10Y",
       "tenor_years": 10.0,
-      "ois_rate": 0.0654
+      "ois_rate": 0.0653
     }
   ],
   "gsec_data": [
@@ -95,22 +95,22 @@
     {
       "tenor_label": "2Y G-Sec",
       "tenor_years": 2.0,
-      "yield_rate": 0.06136926354230067
+      "yield_rate": 0.0613581253804017
     },
     {
       "tenor_label": "5Y G-Sec",
       "tenor_years": 5.0,
-      "yield_rate": 0.06456828971393792
+      "yield_rate": 0.06452382836275107
     },
     {
       "tenor_label": "10Y G-Sec",
       "tenor_years": 10.0,
-      "yield_rate": 0.0699
+      "yield_rate": 0.0698
     },
     {
       "tenor_label": "30Y G-Sec",
       "tenor_years": 30.0,
-      "yield_rate": 0.07523171028606208
+      "yield_rate": 0.07507617163724893
     }
   ],
   "counterparty_data": [
@@ -178,7 +178,7 @@
       "funding_spread_bps": 330.0
     }
   ],
-  "_last_updated": "2026-06-08T14:54:15.501088",
+  "_last_updated": "2026-06-19T15:00:43.044747",
   "policy_rates": {
     "repo_rate": 0.0525,
     "sdf_rate": 0.05,
