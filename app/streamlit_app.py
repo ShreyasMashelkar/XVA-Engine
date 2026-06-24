@@ -285,9 +285,14 @@ def load_market_data():
     return ois_data, gsec_data, counterparties, portfolio, policy_rates
 
 
-@st.cache_data
+@st.cache_resource
 def build_curves():
-    """Build OIS and G-Sec curves."""
+    """Build OIS and G-Sec curves.
+
+    Uses cache_resource (not cache_data): the OISCurve/GSecCurve objects are not
+    pickle-serializable, so cache_data raises UnserializableReturnValueError.
+    They're effectively read-only singletons here, so resource caching is correct.
+    """
     ois_data = get_ois_market_data()
     gsec_data = get_gsec_market_data()
 
@@ -3085,7 +3090,7 @@ elif page == "Equity Derivatives":
     export_strip()
 
     from src.pricing.equity_options import EquityVolSmile, bsm_greeks
-    from src.montecarlo.equity_mc import EquityGBM
+    from src.montecarlo.equity_mc import EquityGBM, EquityHeston
 
     section_header("EQUITY MARKET DATA")
     eq_index = st.selectbox("INDEX", ["NIFTY", "BANKNIFTY"])
@@ -3103,11 +3108,12 @@ elif page == "Equity Derivatives":
                 unsafe_allow_html=True)
 
     section_header("OPTION PRICING")
-    oc = st.columns(4)
+    oc = st.columns(5)
     o_strike = oc[0].number_input("STRIKE", value=float(round(eqmd['spot'] / 100) * 100), step=100.0)
     o_expiry = oc[1].slider("EXPIRY (YRS)", 0.08, 2.0, 0.25, 0.02)
     o_type = oc[2].selectbox("TYPE", ["Call", "Put"])
     o_lots = oc[3].number_input("LOTS", value=10, step=1)
+    vol_model = oc[4].selectbox("EXPOSURE MODEL", ["GBM + smile", "Heston (stoch-vol)"])
     r_eq = ois_curve.zero_rate(max(o_expiry, 0.1))
     fwd = eqmd['spot'] * np.exp((r_eq - eqmd['div_yield']) * o_expiry)
     o_vol = smile.vol(o_strike, fwd)
@@ -3139,12 +3145,31 @@ elif page == "Equity Derivatives":
         st.plotly_chart(figsm, use_container_width=True)
     with col2:
         section_header("EQUITY EXPOSURE PROFILE")
-        gbm = EquityGBM(eqmd['spot'], eqmd['atm_vol'], eqmd['div_yield'])
         tg_eq = np.linspace(0, o_expiry, 41)
-        S = gbm.simulate(tg_eq, int(min(n_paths, 4000)), ois_curve, seed=42)
-        mtm_eq = gbm.option_mtm_paths(S, tg_eq, ois_curve, o_strike, o_expiry, units,
-                                      call=(o_type == "Call"), smile=smile)
-        em = gbm.exposure_metrics(mtm_eq, tg_eq)
+        n_eq = int(min(n_paths, 4000))
+        if vol_model.startswith("Heston"):
+            # Stochastic-vol exposure: calibrate Heston to the live smile, then
+            # simulate spot under the Andersen QE scheme and reprice the option
+            # at each path's own √v(t). Captures vol-of-vol tail risk that GBM
+            # cannot represent.
+            eqm = EquityHeston.from_smile(eqmd['spot'], smile, max(o_expiry, 0.1),
+                                          r_eq, eqmd['div_yield'])
+            S = eqm.simulate(tg_eq, n_eq, ois_curve, seed=42)
+            mtm_eq = eqm.option_mtm_paths(S, tg_eq, ois_curve, o_strike, o_expiry,
+                                          units, call=(o_type == "Call"))
+            em = eqm.exposure_metrics(mtm_eq, tg_eq)
+            st.markdown(
+                f"<div style='color:#556677;font-size:0.6rem'>HESTON CALIBRATED TO "
+                f"SMILE — κ={eqm.params.kappa:.2f}, θ={eqm.params.theta:.3f}, "
+                f"ξ={eqm.params.xi:.2f}, ρ={eqm.params.rho:+.2f}, "
+                f"FIT RMSE={eqm.calibration_rmse*100:.2f} VOL PTS</div>",
+                unsafe_allow_html=True)
+        else:
+            gbm = EquityGBM(eqmd['spot'], eqmd['atm_vol'], eqmd['div_yield'])
+            S = gbm.simulate(tg_eq, n_eq, ois_curve, seed=42)
+            mtm_eq = gbm.option_mtm_paths(S, tg_eq, ois_curve, o_strike, o_expiry, units,
+                                          call=(o_type == "Call"), smile=smile)
+            em = gbm.exposure_metrics(mtm_eq, tg_eq)
         fige = go.Figure()
         fige.add_trace(go.Scatter(x=tg_eq, y=em['PFE'] / 1e7, name='PFE 95%', mode='lines',
                                   line=dict(color=COLORS['PFE'], width=2),
