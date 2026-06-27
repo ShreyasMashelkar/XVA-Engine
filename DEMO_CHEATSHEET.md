@@ -15,7 +15,7 @@
 | # | Page to click | Say |
 |---|---|---|
 | 1 | **F4 · Rates & Vol** | "Starts with the **INR OIS curve** (FBIL MIBOR) + G-Sec. **Dual-curve**: OIS discount, MIBOR projection. Pricer gives MTM, par, **DV01/PV01, key-rate DV01, gamma**. SABR for swaptions." |
-| 2 | **F3 · Exposure Analytics** ⭐ | "Core engine: **Hull-White 1F Monte Carlo, exact sim.** Reprice on every path → **EE / EPE / PFE / ENE / EEPE.** `a` and `σ` are **calibrated on RBI MIBOR history**, not hardcoded." *(linger on the EE vs PFE chart — quote the live numbers below)* |
+| 2 | **F3 · Exposure Analytics** ⭐ | "Core engine: **Hull-White 1F Monte Carlo, exact sim.** Reprice on every path → **EE / EPE / PFE / ENE / EEPE.** `a` and `σ` are **calibrated on RBI MIBOR history**, not hardcoded. This exposure is a **market-risk** measure — same for any counterparty; the name only matters at CVA." *(linger on EE vs PFE — quote live numbers below)* |
 | 3 | **F3 · Collateral & Margin** | "Apply the **CSA**: threshold, MTA, exact **MPoR close-out** — the default-to-liquidation gap. Uncollateralised vs CCP." |
 | 4 | **F3 · XVA Explain** | "**CVA/DVA** from bootstrapped hazard rates off Indian CDS. **FVA** pathwise (no Jensen bias). **MVA** from ISDA SIMM. **KVA** from SA-CCR. **WWR** 3 ways: Cox intensity, Gaussian copula, regime-switching." |
 | 5 | **F5 · FRTB-CVA / BA-CVA** | "Regulatory capital: SA-CCR, BA-CVA, FRTB-CVA, RAROC." |
@@ -28,12 +28,16 @@
 
 ## REAL NUMBERS
 
-### LIVE — quote THESE while on the F3 page (single SBI trade)
-Inputs on screen: **SBI · ₹500 Cr notional · 5Y · receive-fixed · 2,000 paths.**
-- **EE peaks ~₹12.5 Cr** at inception (t=0), decays linearly to **₹0 at 5Y** as the swap amortises.
+### LIVE — quote THESE while on the F3 page
+Inputs on screen: **₹500 Cr notional · 5Y · receive-fixed · 2,000 paths.**
+- **EE peaks ~₹12.6 Cr** at inception (t=0), decays linearly to **₹0 at 5Y** as the swap amortises.
 - **EE ≈ ₹5.3 Cr** at t=2.5Y (per the MTM-distribution box).
 - **EPE (time-avg of EE) ≈ ₹5–6 Cr.**
-- Say: *"For this ₹500 Cr SBI swap, EE peaks around ₹12.5 Cr and EPE is roughly ₹5–6 Cr, decaying to zero at maturity. PFE95 tracks just above EE."*
+- Say: *"This ₹500 Cr 5Y receive-fixed swap has EE peaking ~₹12.6 Cr and EPE ~₹5–6 Cr, decaying to zero at maturity. PFE95 tracks just above EE. This exposure is **counterparty-independent** — it's pure market risk."*
+
+### ⭐ MONEY MOVE — exposure vs credit separation (do this live)
+Switch the **COUNTERPARTY** dropdown SBI → NBFC_X. *(SBI = AAA, 50bps · NBFC_X = BBB, 300bps)*
+> "Watch — the **EE curve doesn't move**, because exposure is market risk. But **CVA jumps ~6×** (50bps → 300bps), because *that's* where the counterparty's default risk enters. Exposure × probability-of-default = CVA. That separation is the heart of XVA."
 
 ### EOD BATCH — full book (only on the EOD/reporting view, label clearly as "full book")
 *Different/larger netting set than the single live trade above — keep them separate.*
@@ -41,7 +45,7 @@ Inputs on screen: **SBI · ₹500 Cr notional · 5Y · receive-fixed · 2,000 pa
 - SBI (full netting set): EPE ₹51.0 Cr · PFE95(1Y) ₹52.8 · CVA ₹1.33.
 - **Insight line:** "HDFC & TATA show **zero EPE but positive DVA/FVA** — out-of-the-money netting sets: no exposure, but a funding/own-credit benefit. That asymmetry is what XVA captures."
 
-> ⚠️ Don't quote the ₹51 Cr EPE while the live single-trade page (~₹5–6 Cr) is on screen — they won't match.
+> ⚠️ Two traps to avoid: (1) Don't quote the ₹51 Cr EPE while the live single-trade page (~₹5–6 Cr) is on screen. (2) Don't call the live EE "SBI's exposure" — it's the **trade's** exposure, identical for any counterparty.
 
 ---
 
