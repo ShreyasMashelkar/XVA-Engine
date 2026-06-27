@@ -37,7 +37,10 @@ Inputs on screen: **₹500 Cr notional · 5Y · receive-fixed · 2,000 paths.**
 
 ### ⭐ MONEY MOVE — exposure vs credit separation (do this live)
 Switch the **COUNTERPARTY** dropdown SBI → NBFC_X. *(SBI = AAA, 50bps · NBFC_X = BBB, 300bps)*
-> "Watch — the **EE curve doesn't move**, because exposure is market risk. But **CVA jumps ~6×** (50bps → 300bps), because *that's* where the counterparty's default risk enters. Exposure × probability-of-default = CVA. That separation is the heart of XVA."
+Verified figures (same ₹500 Cr trade): **CVA ₹0.125 Cr → ₹0.706 Cr** (EE unchanged at ₹12.6455 Cr).
+> "Watch — the **EE curve doesn't move**, because exposure is market risk. But **CVA jumps ~5.6×** (₹0.13 → ₹0.71 Cr), because *that's* where the counterparty's default risk enters. Exposure × probability-of-default = CVA. That separation is the heart of XVA."
+
+*If asked "why 5.6× not 6× when spreads are 6× apart?"* → "CVA isn't linear in spread — a higher hazard rate also lowers survival probability, so there's less time alive to be exposed; that interacts with discounting. The 6× spread ratio gets damped to ~5.6×."
 
 ### EOD BATCH — full book (only on the EOD/reporting view, label clearly as "full book")
 *Different/larger netting set than the single live trade above — keep them separate.*
