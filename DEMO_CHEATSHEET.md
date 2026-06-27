@@ -42,13 +42,17 @@ Verified figures (same ₹500 Cr trade): **CVA ₹0.125 Cr → ₹0.706 Cr** (EE
 
 *If asked "why 5.6× not 6× when spreads are 6× apart?"* → "CVA isn't linear in spread — a higher hazard rate also lowers survival probability, so there's less time alive to be exposed; that interacts with discounting. The 6× spread ratio gets damped to ~5.6×."
 
-### EOD BATCH — full book (only on the EOD/reporting view, label clearly as "full book")
-*Different/larger netting set than the single live trade above — keep them separate.*
-- Book totals (7 cps): Total XVA **₹5.71 Cr** · CVA ₹2.36 · DVA ₹0.48 · FVA **−₹1.18** (net funding *benefit*) · KVA ₹4.53 · EAD ₹320.6 · RWA ₹74.7.
-- SBI (full netting set): EPE ₹51.0 Cr · PFE95(1Y) ₹52.8 · CVA ₹1.33.
-- **Insight line:** "HDFC & TATA show **zero EPE but positive DVA/FVA** — out-of-the-money netting sets: no exposure, but a funding/own-credit benefit. That asymmetry is what XVA captures."
+### FULL BOOK — show on **F1 · Executive Risk Dashboard** (these DO render live)
+10-trade netted portfolio (MC, ~values jitter slightly per run):
+- **Active trades: 10** · **Total Portfolio MTM ~₹53 Cr** · **Max EE ~₹99 Cr** · **Max PFE95 ~₹99 Cr** + a netted exposure-profile chart.
+- Say: *"This is the whole book netted down — 10 trades, portfolio MTM ~₹53 Cr, peak expected exposure ~₹99 Cr after netting."*
 
-> ⚠️ Two traps to avoid: (1) Don't quote the ₹51 Cr EPE while the live single-trade page (~₹5–6 Cr) is on screen. (2) Don't call the live EE "SBI's exposure" — it's the **trade's** exposure, identical for any counterparty.
+### EOD REPORT FILE — verbal only, NOT shown on any page
+*These come from `reports/EOD_Risk_Report_*.csv` (batch artifact). Don't flash to a page expecting them — there's no screen for them.*
+- Book XVA totals: Total XVA **₹5.71 Cr** · CVA ₹2.36 · DVA ₹0.48 · FVA **−₹1.18** (net funding *benefit*) · KVA ₹4.53.
+- **Insight line:** "In the EOD batch, HDFC & TATA show **zero EPE but positive DVA/FVA** — out-of-the-money netting sets: no exposure, but a funding/own-credit benefit. That asymmetry is what XVA captures."
+
+> ⚠️ Three traps: (1) The ₹5.71 Cr / ₹51 Cr figures are **NOT on any screen** — only in the EOD CSV; quote them verbally, never flash to a page for them. (2) Don't call the live single-trade EE "SBI's exposure" — it's the **trade's** exposure. (3) Live MC numbers jitter run-to-run; say "~".
 
 ---
 
