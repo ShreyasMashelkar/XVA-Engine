@@ -700,8 +700,8 @@ def get_csa_scenarios() -> Dict[str, Dict]:
             'independent_amount_cr': 0.0,
         },
         'Partially Collateralised': {
-            'threshold_cr': 50.0,
-            'mta_cr': 5.0,
+            'threshold_cr': 5.0,
+            'mta_cr': 1.0,
             'mpor_days': 10,
             'margin_frequency': 'weekly',
             'independent_amount_cr': 0.0,
