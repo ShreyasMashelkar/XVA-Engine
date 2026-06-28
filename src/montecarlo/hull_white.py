@@ -258,15 +258,29 @@ class HullWhite1F:
                 df_end = P(t, t + remaining)
                 float_pv = notional * (df_start - df_end)
             else:
-                # Multi-curve explicit projection
+                # Multi-curve projection — PATH-DEPENDENT forwards. The floating
+                # forward for each period is implied from THIS path's HW bond
+                # prices P(t,·) (which carry the simulated state x_t), plus the
+                # deterministic projection-vs-OIS basis at that tenor. Using the
+                # static proj.forward_rate alone froze the float leg's moneyness,
+                # so the swap MTM barely dispersed across paths (EE≈PFE, ENE≈0)
+                # and CVA collapsed to 0 the instant the trade went OTM.
                 float_pv = np.zeros(n_paths)
                 for j, T_pay in enumerate(payment_times):
-                    T1 = t + dates_with_start[j]
-                    T2 = t + T_pay
-                    # Forward rate implied from the PROJECTION curve
-                    fwd = proj.forward_rate(T1, T2)
-                    df_j = P(t, T2)
-                    float_pv += notional * fwd * deltas[j] * df_j
+                    T1  = t + dates_with_start[j]
+                    T2  = t + T_pay
+                    tau = T2 - T1
+                    if tau <= 0:
+                        continue
+                    P_t_T1 = P(t, T1)            # = 1 when T1 == t
+                    P_t_T2 = P(t, T2)
+                    # Per-path simple-compounded OIS forward from the bond prices.
+                    fwd_ois_path = (P_t_T1 / P_t_T2 - 1.0) / tau
+                    # Deterministic basis between the projection curve and OIS at
+                    # this tenor (preserves the OIS–MIBOR basis; 0 if proj==OIS).
+                    basis = proj.forward_rate(T1, T2) - self.curve.forward_rate(T1, T2)
+                    fwd   = fwd_ois_path + basis
+                    float_pv += notional * fwd * deltas[j] * P_t_T2
 
             if direction == 'Receive Fixed':
                 mtm_paths[:, i] = fixed_pv - float_pv
