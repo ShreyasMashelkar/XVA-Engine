@@ -2070,18 +2070,23 @@ elif page == "Collateral & Margin Analytics":
                                        maturity=float(maturity), direction=direction)
             kr_dv01      = pricer_mva.key_rate_dv01(ois_curve)
             tenor_map    = {'1.0': '1Y', '2.0': '2Y', '3.0': '3Y', '5.0': '5Y', '10.0': '10Y'}
-            simm_sens    = {tenor_map[k.replace('Y','').strip()]: abs(v) * 10000 * 1e7
+            # SIMM IR delta sensitivity = DV01 in ₹ per bp. key_rate_dv01 is in
+            # ₹ Crores per bp, so convert Cr→₹ with ×1e7 only. (A previous ×10000
+            # extra factor pushed IM into the hundreds of billions.)
+            simm_sens    = {tenor_map[k.replace('Y','').strip()]: abs(v) * 1e7
                             for k, v in kr_dv01.items() if k.replace('Y','').strip() in tenor_map}
             if not simm_sens:
-                simm_sens = {'5Y': abs(pricer_mva.dv01(ois_curve)) * 10000 * 1e7}
+                simm_sens = {'5Y': abs(pricer_mva.dv01(ois_curve)) * 1e7}
 
             im_profile   = mva_engine.estimate_dim_profile(float(maturity), tg_cube, simm_sens)
             mva          = mva_engine.compute_mva(tg_cube, im_profile, dfs_cube)
             im_t0        = mva_engine.simm.compute_im_rates_delta(simm_sens)
 
             c1m, c2m = st.columns(2)
-            c1m.metric("SIMM IM AT INCEPTION (₹)", f"₹{im_t0:,.0f}", accent="amber")
-            c2m.metric("SIMM MVA (₹ CR)",           f"₹{mva:.4f}",    accent="red")
+            # im_t0 is in ₹ (tile labelled ₹); mva is in ₹ too, so convert to
+            # ₹ Crores (÷1e7) for the ₹-CR tile.
+            c1m.metric("SIMM IM AT INCEPTION (₹)", f"₹{im_t0:,.0f}",   accent="amber")
+            c2m.metric("SIMM MVA (₹ CR)",           f"₹{mva/1e7:.4f}", accent="red")
     else:
         st.markdown("<div class='stAlert'>EXPOSURE CUBE NOT FOUND — GENERATE FROM ACTIVE TRADE FIRST</div>",
                     unsafe_allow_html=True)
