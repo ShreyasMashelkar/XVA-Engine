@@ -88,9 +88,12 @@ class MVAEngine:
             IM at inception in ₹ Crores.
         """
         z = norm.ppf(self.confidence)
-        vol_decimal = self.vol_bps / 10000.0
-        horizon_scale = np.sqrt(self.mpor_days / 252.0)
-        return abs(self.dv01_cr) * vol_decimal * horizon_scale * z
+        # vol_bps is the annualised rate vol in bps. The 99% MPOR move (in bps)
+        # is z × vol_bps × sqrt(MPOR/252); IM = dv01_cr (Cr per bp) × that move.
+        # vol_bps must stay in bps here — dividing by 10000 understated IM (and
+        # hence MVA) by ~10,000×.
+        move_bps = z * self.vol_bps * np.sqrt(self.mpor_days / 252.0)
+        return abs(self.dv01_cr) * move_bps
 
     def compute_simm_im(self, key_rate_dv01s: Dict[float, float]) -> float:
         """

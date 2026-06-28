@@ -854,7 +854,10 @@ if page == "Trade Analytics":
         metrics['EE'], time_grid, cpty_row['risk_weight']
     )
 
-    xva_adjusted = mtm_value - cva_val + dva_val - abs(fva_result['FVA']) - kva_result['KVA']
+    # FVA is signed (fva.py convention: negative = funding cost, positive = net
+    # funding benefit), so add it directly. Using -abs(FVA) here forced FVA to
+    # always be a cost and would wrongly subtract a net funding benefit.
+    xva_adjusted = mtm_value - cva_val + dva_val + fva_result['FVA'] - kva_result['KVA']
 
     section_header("MARKET RISK METRICS", "Key rate sensitivities and mark-to-market for the active trade")
     cols = st.columns(4)
@@ -869,7 +872,7 @@ if page == "Trade Analytics":
     cols2 = st.columns(5)
     cols2[0].metric("CVA", f"₹{cva_val:.4f} CR", accent="red")
     cols2[1].metric("DVA", f"₹{dva_val:.4f} CR", accent="green")
-    cols2[2].metric("FVA", f"₹{fva_result['FVA']:.4f} CR", accent="amber")
+    cols2[2].metric("FVA (COST)", f"₹{fva_result['FVA']:.4f} CR", accent="amber")
     cols2[3].metric("KVA", f"₹{kva_result['KVA']:.4f} CR", accent="amber")
     cols2[4].metric("XVA-ADJ MTM", f"₹{xva_adjusted:.4f} CR",
                      delta=f"{(xva_adjusted - mtm_value):.4f} CR ADJ", accent="blue")
