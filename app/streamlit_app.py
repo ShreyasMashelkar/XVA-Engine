@@ -318,6 +318,25 @@ def run_simulation(_curve, notional, fixed_rate, maturity, direction,
     )
 
 
+@st.cache_data(show_spinner=False)
+def run_shocked_simulation(rate_shock_bps, notional, fixed_rate, maturity,
+                           direction, n_paths, a, sigma):
+    """Re-simulate the exposure profile under a parallel rate shock.
+
+    Keyed on rate_shock_bps so each distinct shock is cached separately. Unlike
+    run_simulation (whose curve arg is excluded from the cache key), this
+    rebuilds the base OIS curve, shifts it, and re-runs the Monte Carlo so the
+    exposure profile genuinely reflects the shocked rate environment.
+    """
+    base_ois, _ = build_curves()
+    shocked = base_ois.shift(int(rate_shock_bps))
+    return run_exposure_simulation(
+        shocked, notional=notional, fixed_rate=fixed_rate,
+        maturity=maturity, direction=direction,
+        n_paths=n_paths, a=a, sigma=sigma
+    )
+
+
 # Equity market-data fetches hit NSE over the network (8–18s blocking with the
 # calibrated fallback). Cache them for the session so widget interactions on the
 # equity pages don't re-fetch on every rerun.
@@ -1355,9 +1374,20 @@ elif page == "Stress & Scenario Analysis":
     base_mtm       = swap.mtm(ois_curve)
     shocked_cds    = max(cpty_row['cds_spread_bps'] + credit_shock, 1.0)
     shocked_credit = CreditCurve(shocked_cds, cpty_row['recovery_rate'])
-    cva_engine     = CVAEngine(ois_curve)
-    shocked_cva    = cva_engine.compute_cva(metrics['EE'], time_grid, shocked_credit)
-    base_cva       = cva_engine.compute_cva(metrics['EE'], time_grid, credit_curve)
+    cva_engine     = CVAEngine(ois_curve)   # base engine, reused downstream
+
+    # CVA stress reflects BOTH channels: re-simulate the exposure profile under
+    # the shocked rate curve (rate -> exposure -> CVA) and apply the shocked
+    # credit curve, discounting on the shocked curve. The base uses the 0-shock
+    # re-sim so the Base scenario nets to exactly zero.
+    _sim_args = (notional, fixed_rate, float(maturity), direction, n_paths, mean_rev, vol)
+    base_sim  = run_shocked_simulation(0, *_sim_args)
+    base_cva  = CVAEngine(ois_curve).compute_cva(
+                    base_sim['metrics']['EE'], base_sim['time_grid'], credit_curve)
+    with st.spinner("RE-SIMULATING EXPOSURE UNDER RATE SHOCK…"):
+        shk_sim = run_shocked_simulation(rate_shock, *_sim_args)
+    shocked_cva = CVAEngine(shocked_curve).compute_cva(
+                      shk_sim['metrics']['EE'], shk_sim['time_grid'], shocked_credit)
 
     section_header("SCENARIO IMPACT")
     cols = st.columns(4)
@@ -1378,11 +1408,16 @@ elif page == "Stress & Scenario Analysis":
     stress_scenarios = get_stress_scenarios()
     stress_results   = []
     for _, scenario in stress_scenarios.iterrows():
-        sc_curve  = ois_curve.shift(scenario['rate_shock_bps'])
+        rsh       = int(scenario['rate_shock_bps'])
+        sc_curve  = ois_curve.shift(rsh)
         sc_mtm    = swap.mtm(sc_curve)
         sc_cds    = max(cpty_row['cds_spread_bps'] + scenario['credit_spread_shock_bps'], 1.0)
         sc_credit = CreditCurve(sc_cds, cpty_row['recovery_rate'])
-        sc_cva    = cva_engine.compute_cva(metrics['EE'], time_grid, sc_credit)
+        # Re-simulate exposure under the scenario rate shock, discount on the
+        # shocked curve, then apply the shocked credit curve.
+        sc_sim    = run_shocked_simulation(rsh, *_sim_args)
+        sc_cva    = CVAEngine(sc_curve).compute_cva(
+                        sc_sim['metrics']['EE'], sc_sim['time_grid'], sc_credit)
         stress_results.append({
             'scenario': scenario['scenario'],
             'description': scenario['description'],
