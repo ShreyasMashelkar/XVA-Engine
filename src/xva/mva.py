@@ -117,8 +117,11 @@ class MVAEngine:
         for tenor, dv01 in key_rate_dv01s.items():
             # Find nearest SIMM bucket
             nearest = min(SIMM_IR_BUCKETS, key=lambda b: abs(b - tenor))
-            rw = SIMM_IR_VOL_BPS.get(nearest, 75) / 10000.0   # convert bps to decimal
-            weighted[tenor] = dv01 * rw   # signed weighted sensitivity
+            # SIMM weighted sensitivity = RW(bps) × DV01(Cr per bp); the product
+            # is in Cr. The previous /10000 understated IM by 1e4 (dv01 is
+            # already per-bp). See SIMMCalculator.compute_im_rates_delta.
+            rw = SIMM_IR_VOL_BPS.get(nearest, 75)
+            weighted[tenor] = dv01 * rw   # signed weighted sensitivity (Cr)
 
         s = list(weighted.values())
         if not s:

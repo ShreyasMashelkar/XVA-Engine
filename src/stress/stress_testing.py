@@ -75,6 +75,13 @@ def stress_test_cva(ee_profile: np.ndarray, time_grid: np.ndarray,
     """
     Stress test CVA across credit spread shock scenarios.
 
+    NOTE: This holds the exposure profile (ee_profile) FIXED and shocks only
+    the credit curve, so it captures the credit channel but not the rate ->
+    exposure -> CVA channel. The live Stress page re-simulates exposure under
+    each shocked rate curve for a full joint stress; if you reuse this helper
+    for combined rate+credit scenarios, pass an exposure profile already
+    simulated on the shocked rate curve.
+
     Args:
         ee_profile: Expected Exposure profile.
         time_grid: Time grid.
@@ -129,6 +136,12 @@ def run_full_stress_test(base_curve: OISCurve,
     2. Reprice all swaps
     3. Recompute CVA with shocked credit spreads
     4. Report changes in MTM, EE, CVA, KVA
+
+    NOTE: exposure_metrics['EE'] is held FIXED across scenarios — the CVA
+    response captures the credit-spread channel only, not the rate -> exposure
+    channel (rate shocks reprice MTM but not the exposure profile here). The
+    live Stress page re-simulates exposure per shocked curve for a full joint
+    stress.
 
     Args:
         base_curve: Base OIS curve.

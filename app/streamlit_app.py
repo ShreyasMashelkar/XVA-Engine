@@ -33,7 +33,6 @@ from src.xva.cva import CVAEngine, CreditCurve
 from src.xva.fva import FVAEngine
 from src.xva.kva import KVAEngine
 from src.sa_ccr.regulatory import SACCRCalculator, compute_rwa, compute_capital_requirement
-from src.stress.stress_testing import stress_test_swap, run_full_stress_test
 
 # V2 Imports
 from src.data_ingestion.portfolio_manager import PortfolioManager
