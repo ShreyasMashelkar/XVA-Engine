@@ -2026,21 +2026,22 @@ elif page == "Collateral & Margin Analytics":
     from src.xva.simm import MVAEngineV2
 
     cube_path = "data/exposure_cube.parquet"
+    ACTIVE_TID = "TRADE_CURRENT"
 
-    if st.button("GENERATE CUBE FROM ACTIVE TRADE"):
-        cube = ExposureCube(cube_path)
-        cube.write_paths("TRADE_CURRENT", time_grid, mtm_paths)
-        cube.flush()
-        st.success("CUBE GENERATED — ACTIVE TRADE SIMULATION PERSISTED")
+    # Always (re)persist the live sidebar trade under a fixed id, overwriting so
+    # the cube reflects the ACTIVE trade and never accumulates duplicate paths.
+    cube = ExposureCube(cube_path)
+    cube.replace_paths(ACTIVE_TID, time_grid, mtm_paths)
+    st.markdown(f"<div style='color:#8899aa;font-size:0.72rem'>CUBE ACTIVE — "
+                f"<span style='color:#ff6600'>{ACTIVE_TID}</span> "
+                f"({cpty_selected}, ₹{notional:.0f} Cr, {maturity}Y, {direction})</div>",
+                unsafe_allow_html=True)
 
-    if os.path.exists(cube_path):
-        cube      = ExposureCube(cube_path)
-        cube_tids = cube.get_summary().get('trade_list', [])
-        st.markdown(f"<div style='color:#8899aa;font-size:0.72rem'>CUBE ACTIVE — TRADES: "
-                    f"<span style='color:#ff6600'>{cube_tids}</span></div>", unsafe_allow_html=True)
-
-        if cube_tids:
-            df_trade  = cube.read_trade(cube_tids[0])
+    if True:
+        if True:
+            # Read the active trade explicitly (not cube_tids[0], which could be
+            # a stale demo trade persisted earlier).
+            df_trade  = cube.read_trade(ACTIVE_TID)
             tg_cube   = np.sort(df_trade['time_step'].unique())
             npv_paths = df_trade.pivot(index='path_id', columns='time_step', values='npv').values
 
