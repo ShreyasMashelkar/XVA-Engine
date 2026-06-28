@@ -2473,17 +2473,22 @@ elif page == "Portfolio WWR (Copula)":
     for _, r in counterparties.iterrows():
         et = str(r['entity_type']).lower()
         sectors.append(next((v for k, v in _sector_map.items() if k in et), 'Corporate_IG'))
-    # Heterogeneous EE profiles: scale the active-trade EE by relative CDS level
+    # Heterogeneous exposures: scale the active-trade profile by relative CDS
+    # level. We scale both the average-EE profile (for standalone CVA) and the
+    # path-level MTM cube (for the WWR simulation) so default timing and
+    # exposure are sampled on the same paths.
     base_cds = max(cpty_row['cds_spread_bps'], 1.0)
     ee_profiles = [metrics['EE'] * (r['cds_spread_bps'] / base_cds)
                    for _, r in counterparties.iterrows()]
 
     rp = rate_paths[:2000]
+    mtm_cubes = [mtm_paths[:rp.shape[0]] * (r['cds_spread_bps'] / base_cds)
+                 for _, r in counterparties.iterrows()]
     model = GaussianCopulaWWR(ois_curve, n_paths=rp.shape[0], seed=42)
     with st.spinner("SIMULATING CORRELATED DEFAULTS..."):
         wwr = model.compute_portfolio_cva_copula(
             names, credit_curves, sectors, ee_profiles, time_grid,
-            rate_paths=rp, rate_correlation=rate_corr)
+            rate_paths=rp, rate_correlation=rate_corr, mtm_cubes=mtm_cubes)
 
     section_header("PORTFOLIO CVA UNDER COPULA WWR")
     w = st.columns(4)
