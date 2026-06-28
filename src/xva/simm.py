@@ -271,8 +271,11 @@ class SIMMEquityDeltaCalculator:
             for b, s in equity_sensitivities.items()
         }
         buckets  = list(bucket_ws.keys())
+        # Sensitivities are keyed by bucket, so b1 == b2 is the same weighted
+        # sensitivity and must self-correlate at 1.0; _corr's same-bucket 0.99
+        # applies only between DISTINCT names within a bucket.
         variance = sum(
-            self._corr(b1, b2) * bucket_ws[b1] * bucket_ws[b2]
+            (1.0 if b1 == b2 else self._corr(b1, b2)) * bucket_ws[b1] * bucket_ws[b2]
             for b1 in buckets for b2 in buckets
         )
         return float(np.sqrt(max(variance, 0.0)))

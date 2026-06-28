@@ -35,8 +35,10 @@ from typing import Dict, List, Optional
 #   Bucket 5: Unrated
 
 CS_RISK_WEIGHTS_BPS = {
-    'AAA': 0.5,    # IG sovereign / quasi-sovereign (SBI implied)
-    'AA': 1.0,     # IG financial (HDFC, ICICI, Kotak)
+    # Note: ratings are mapped to SA-CVA buckets by _rating_to_bucket before
+    # lookup, and AAA maps to the 'AA' bucket (there is no separate AAA bucket
+    # in SA-CVA), so AAA names correctly take the 1.0 weight below.
+    'AA': 1.0,     # IG financial (incl. AAA: SBI, HDFC, ICICI, Kotak)
     'A': 2.0,      # IG non-financial (TATA, Reliance)
     'BBB': 3.0,    # BBB non-financial
     'BB': 6.0,     # Sub-IG
