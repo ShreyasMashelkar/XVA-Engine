@@ -1605,13 +1605,16 @@ elif page == "Capital & RAROC Analytics":
         eng        = RAROCEngine(hurdle_rate=0.10)
         raroc_data = []
         for _, row in df.iterrows():
+            mat  = float(row.get('Maturity', 1.0)) or 1.0
+            # Revenue is an annual margin; annualise the lifetime EL and XVA
+            # so RAROC is a per-year return comparable to the 10% hurdle.
             rev  = row.get('Revenue', row['EAD'] * 0.05)
-            el   = row['EAD'] * 0.01
-            # ranked_df now carries genuine per-trade CVA / FVA / KVA
+            el   = (row['EAD'] * 0.01) / mat
+            # ranked_df now carries genuine per-trade CVA / FVA / KVA (lifetime)
             cva  = row.get('CVA', 0.0)
             fva  = row.get('FVA', 0.0)
             kva  = row.get('KVA', 0.0)
-            xva  = cva + fva + kva
+            xva  = (cva + fva + kva) / mat
             cap  = row['Capital']
             r_r  = eng.compute_raroc(rev, el, rev * 0.1, xva, cap)
             raroc_data.append({
