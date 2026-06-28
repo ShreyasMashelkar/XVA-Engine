@@ -46,14 +46,22 @@ class SwapPnLAttribution:
         self.pay_freq   = pay_freq
 
     def _price_swap(self, curve: OISCurve, elapsed: float = 0.0) -> float:
-        """Price the swap using the given curve. elapsed = days elapsed since inception."""
+        """Price the swap using the given curve. elapsed = years elapsed since inception."""
         remaining = self.maturity - elapsed
         if remaining <= 0:
             return 0.0
-        payment_times = np.arange(self.pay_freq, remaining + 1e-6, self.pay_freq)
-        if len(payment_times) == 0:
+        # Anchor the coupon schedule to inception and advance the observation
+        # point by `elapsed`; only drop coupons that have actually been paid
+        # (time-to-payment <= 0). Re-deriving the grid from a shrinking
+        # `remaining` made np.arange drop the final coupon the instant
+        # `remaining` fell below a payment boundary, producing a spurious
+        # ~one-coupon jump in roll-down.
+        anchored = np.arange(self.pay_freq, self.maturity + 1e-6, self.pay_freq)
+        ttp = anchored - elapsed
+        ttp = ttp[ttp > 1e-9]
+        if len(ttp) == 0:
             return 0.0
-        dfs = np.array([curve.df(t) for t in payment_times])
+        dfs = np.array([curve.df(t) for t in ttp])
         fixed_pv = self.notional * self.fixed_rate * self.pay_freq * np.sum(dfs)
         float_pv = self.notional * (1 - curve.df(remaining))
         return float_pv - fixed_pv
