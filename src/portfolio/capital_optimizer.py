@@ -86,12 +86,17 @@ class CapitalOptimizer:
             kva = 0.0
 
         # 4. Profit / Return on Capital
-        # Revenue proxy: MTM (if positive) plus an embedded margin.
-        revenue = max(mtm_val, 0) + (notional * 0.001 * maturity)  # assume 10bps embedded margin
+        # Revenue = embedded margin only, ANNUAL. MTM is the position's
+        # mark-to-market *value*, not income earned, so it must not be counted
+        # as revenue (doing so inflated RAROC into the thousands of percent).
+        # Use a flat 10bps annual margin on notional.
+        revenue = notional * 0.001  # annual margin (₹ Cr/yr)
 
-        # RoC now charges the full XVA cost stack (CVA + FVA + KVA).
-        total_xva = cva + fva + kva
-        roc = (revenue - total_xva) / capital if capital > 0 else 0
+        # Annualise the lifetime XVA cost so it is comparable to annual revenue
+        # and to the annual hurdle rate.
+        total_xva  = cva + fva + kva
+        annual_xva = total_xva / maturity if maturity > 0 else total_xva
+        roc = (revenue - annual_xva) / capital if capital > 0 else 0
 
         return {
             'TradeID': trade['TradeID'],
@@ -100,6 +105,7 @@ class CapitalOptimizer:
             'EAD': ead,
             'RWA': rwa,
             'Capital': capital,
+            'Maturity': maturity,
             'CVA': cva,
             'FVA': fva,
             'KVA': kva,
