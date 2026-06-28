@@ -153,7 +153,12 @@ def compute_tenor_specific_dim(
 
         for tenor_label, dv01 in dv01_by_tenor.items():
             tenor_yrs = TENOR_TO_YEARS.get(tenor_label)
-            if tenor_yrs is None or tenor_yrs > remaining + 0.5:
+            # Drop only tenor buckets beyond the trade's ORIGINAL maturity.
+            # Comparing against the shrinking `remaining` life dropped the
+            # dominant maturity bucket (e.g. 5Y on a 5Y trade) once t>0.5y,
+            # collapsing DIM to a cliff instead of amortising smoothly. The
+            # maturity_scale term already decays the DV01 toward maturity.
+            if tenor_yrs is None or tenor_yrs > trade_maturity + 0.5:
                 continue
             scaled_dv01    = abs(dv01) * maturity_scale
             vol_bps        = term_vols.get(tenor_label, 60.0)
