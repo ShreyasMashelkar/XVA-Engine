@@ -534,10 +534,12 @@ with st.sidebar:
         TRADE PARAMETERS</div>""", unsafe_allow_html=True)
 
     counterparties = get_counterparty_data()
+    _cpty_names = counterparties['counterparty'].tolist()
+    _default_cpty = _cpty_names.index('SBI') if 'SBI' in _cpty_names else 0
     cpty_selected = st.selectbox(
         "COUNTERPARTY",
-        counterparties['counterparty'].tolist(),
-        index=0
+        _cpty_names,
+        index=_default_cpty
     )
 
     notional  = st.number_input("NOTIONAL (₹ CR)", value=500.0,

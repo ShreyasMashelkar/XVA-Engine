@@ -636,7 +636,65 @@ def get_historical_mibor(n_days: int = 504, seed: int = 42) -> pd.DataFrame:
         return _synthetic_mibor_fallback(n_days, seed)
 
 
+# Display entity types for the REAL trade-book counterparties, so the
+# sector-based logic downstream (PSU / Private / NBFC / Corporate) still
+# resolves correctly off the `entity_type` column.
+_BOOK_ENTITY_TYPE = {
+    'SBI':      'PSU Bank',
+    'HDFC':     'Private Bank',
+    'ICICI':    'Private Bank',
+    'Kotak':    'Private Bank',
+    'Reliance': 'Corporate',
+    'TATA':     'Corporate',
+    'NBFC_X':   'NBFC',
+}
+
+
 def get_counterparty_data() -> pd.DataFrame:
+    """Counterparty credit master for the app.
+
+    Primary source is the REAL portfolio counterparty master
+    (data/counterparties.csv via PortfolioManager) so the names and credit
+    curves shown across the app are consistent with the actual trade book.
+    CDS spreads there are the book's configured per-name spreads (rating-implied
+    proxies — India has no liquid single-name CDS), hence provenance 'synthetic'.
+
+    Falls back to the illustrative rating-ladder list if the master is missing.
+    """
+    try:
+        from src.data_ingestion.portfolio_manager import PortfolioManager
+        raw = PortfolioManager.load_counterparties()
+        if raw is None or raw.empty:
+            raise ValueError('counterparty master empty')
+
+        rows = []
+        for _, r in raw.iterrows():
+            name   = str(r['Counterparty'])
+            sector = str(r.get('Sector', ''))
+            entity_type = _BOOK_ENTITY_TYPE.get(
+                name, 'Corporate' if sector.lower() == 'corporate' else 'Bank')
+            # FundingSpread is stored as a decimal (0.0050 = 50bps).
+            fund_bps = float(r.get('FundingSpread', 0.0)) * 10000.0
+            rows.append({
+                'counterparty':       name,
+                'entity_type':        entity_type,
+                'rating':             str(r['Rating']),
+                'risk_weight':        float(r['RiskWeight']),
+                'cds_spread_bps':     float(r['CDS_Spread_BPS']),
+                'recovery_rate':      float(r['RecoveryRate']),
+                'funding_spread_bps': fund_bps,
+            })
+
+        df = pd.DataFrame(rows)
+        _save_cache('counterparty_data', df.to_dict('records'))
+        _set_provenance('counterparty_credit', 'synthetic',
+                        'portfolio counterparty master (rating-implied spreads)')
+        return df
+
+    except Exception as e:
+        logging.warning(f'[MarketData] Counterparty master load failed: {e}. '
+                        f'Using illustrative rating ladder.')
+
     COUNTERPARTY_MASTER = [
         {'counterparty': 'SBI',                      'entity_type': 'PSU Bank',      'rating': 'AAA',  'risk_weight': 0.20},
         {'counterparty': 'HDFC Bank',                'entity_type': 'Private Bank',  'rating': 'AA+',  'risk_weight': 0.20},
