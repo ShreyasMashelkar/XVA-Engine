@@ -117,33 +117,35 @@ class GaussianCopulaWWR:
         rng = np.random.default_rng(self.seed)
         n   = len(counterparties)
 
+        # corr is the Basel one-factor asset-correlation matrix; it is returned
+        # for display. We sample directly from the SAME one-factor structure
+        # (loadings b_i = sqrt(asset_corr_i), so corr(i,j)=b_i*b_j matches the
+        # matrix's off-diagonals) rather than applying a Cholesky on top of an
+        # already-correlated draw — the latter double-counted correlation and
+        # inflated Var(Z) above 1, biasing default times toward t=0.
         corr = build_empirical_correlation_matrix(sectors)
-        try:
-            L = np.linalg.cholesky(corr)
-        except np.linalg.LinAlgError:
-            L = np.linalg.cholesky(corr + np.eye(n) * 0.01)
 
-        Z_indep = rng.standard_normal((self.n_paths, n))
-
-        # Systematic factor: optionally correlated with rate paths
+        # Systematic factor (~N(0,1)) optionally tilted toward the rate paths so
+        # default timing co-moves with rates (the WWR channel).
+        z_common = rng.standard_normal(self.n_paths)
         if rate_paths is not None:
             final_idx   = min(n_time_steps, rate_paths.shape[1]-1)
             rate_factor = rate_paths[:, final_idx]
             rf_norm     = (rate_factor - rate_factor.mean()) / (rate_factor.std() + 1e-10)
-            rho_r       = rate_correlation
-            Z_sys       = rho_r * rf_norm + np.sqrt(1-rho_r**2) * Z_indep[:,0]
+            rho_r       = float(np.clip(rate_correlation, -0.999, 0.999))
+            Z_sys       = rho_r * rf_norm + np.sqrt(1.0 - rho_r**2) * z_common
         else:
-            Z_sys = Z_indep[:,0]
+            Z_sys = z_common
 
-        # One-factor model per counterparty
-        Z_corr = np.zeros((self.n_paths, n))
+        # One-factor copula draws: each U[:,i] is exactly uniform (no variance
+        # inflation), so marginal default-time distributions are unbiased.
+        U = np.zeros((self.n_paths, n))
         for i in range(n):
-            rho_i    = get_asset_correlation(sectors[i] if i < len(sectors) else 'Financial')
-            z_idio   = rng.standard_normal(self.n_paths)
-            Z_corr[:,i] = rho_i * Z_sys + np.sqrt(max(1-rho_i**2, 0.0)) * z_idio
-
-        Z_copula = Z_corr @ L.T
-        U        = norm.cdf(Z_copula)
+            a_i    = get_asset_correlation(sectors[i] if i < len(sectors) else 'Financial')
+            b_i    = np.sqrt(max(min(a_i, 1.0), 0.0))          # factor loading
+            z_idio = rng.standard_normal(self.n_paths)
+            Z_i    = b_i * Z_sys + np.sqrt(max(1.0 - b_i**2, 0.0)) * z_idio
+            U[:,i] = norm.cdf(Z_i)
 
         default_times = np.zeros((self.n_paths, n))
         for i, curve in enumerate(credit_curves):
@@ -166,6 +168,7 @@ class GaussianCopulaWWR:
         recovery_rate:  float = 0.40,
         rate_paths:     Optional[np.ndarray] = None,
         rate_correlation: float = 0.40,
+        mtm_cubes:      Optional[List[np.ndarray]] = None,
     ) -> Dict:
         """
         Compute portfolio CVA under Gaussian copula WWR model.
@@ -210,15 +213,28 @@ class GaussianCopulaWWR:
                 cva    += lgd * ee_mid * dp * df
             standalone_cvas[name] = cva
 
-        # Portfolio CVA via simulation
+        # Portfolio CVA via simulation.
+        #
+        # When path-level MTM cubes are supplied, exposure at default is read
+        # from the SAME path's scenario, so default timing (correlated with
+        # rates via rate_correlation) and exposure are jointly sampled — this is
+        # what lets the rate-default correlation produce genuine wrong-way /
+        # right-way risk. Falling back to the deterministic average-EE profile
+        # (no cube) leaves rate_correlation essentially inert, since exposure no
+        # longer depends on the path.
+        use_cubes = mtm_cubes is not None
         portfolio_cva_paths = np.zeros(self.n_paths)
         for i, (name, ee) in enumerate(zip(counterparties, ee_profiles)):
             t_defs = default_times[:,i]
+            pos_cube = np.maximum(mtm_cubes[i], 0.0) if use_cubes else None
             for path_idx in range(self.n_paths):
                 t_def = t_defs[path_idx]
                 if t_def > time_grid[-1]:
                     continue
-                ee_at_def = float(np.interp(t_def, time_grid, ee))
+                if use_cubes:
+                    ee_at_def = float(np.interp(t_def, time_grid, pos_cube[path_idx]))
+                else:
+                    ee_at_def = float(np.interp(t_def, time_grid, ee))
                 df_at_def = self.ois_curve.df(min(t_def, time_grid[-1]))
                 portfolio_cva_paths[path_idx] += lgd * max(ee_at_def, 0.0) * df_at_def
 
