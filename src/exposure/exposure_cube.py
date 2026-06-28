@@ -108,6 +108,45 @@ class ExposureCube:
         self._buffer = []
         self._buffer_rows = 0
 
+    def replace_paths(self, trade_id: str,
+                      time_grid: np.ndarray,
+                      npv_paths: np.ndarray):
+        """
+        Write a trade's NPV paths, REPLACING any existing rows for that trade_id.
+
+        Unlike write_paths + flush(append=True) — which appends a new part-file
+        every call and so stacks duplicate (trade_id, path_id, time_step) rows
+        on repeated writes — this rewrites the cube with the trade's prior rows
+        removed first. Use this when (re)persisting the active trade so the cube
+        always reflects the latest simulation without duplicate accumulation.
+        """
+        n_paths, n_steps = npv_paths.shape
+        path_ids_2d   = np.broadcast_to(
+            np.arange(n_paths, dtype=np.int32)[:, None], (n_paths, n_steps))
+        time_steps_2d = np.broadcast_to(
+            time_grid[:n_steps][None, :], (n_paths, n_steps))
+        df_new = pd.DataFrame({
+            'path_id':   path_ids_2d.ravel().astype(np.int32),
+            'time_step': time_steps_2d.ravel().astype(np.float32),
+            'trade_id':  trade_id,
+            'npv':       npv_paths.ravel().astype(np.float32),
+            'exposure':  np.maximum(npv_paths, 0.0).ravel().astype(np.float32),
+        })
+
+        if self.cube_path.exists():
+            existing = pq.read_table(str(self.cube_path)).to_pandas()
+            existing = existing[existing['trade_id'] != trade_id]
+            combined = pd.concat([existing, df_new], ignore_index=True)
+        else:
+            combined = df_new
+
+        table = pa.Table.from_pandas(combined, schema=self.SCHEMA,
+                                     preserve_index=False)
+        import uuid
+        self.clear()
+        self.cube_path.mkdir(parents=True, exist_ok=True)
+        pq.write_table(table, self.cube_path / f"part-{uuid.uuid4().hex}.parquet")
+
     def read_trade(self, trade_id: str) -> pd.DataFrame:
         """Read all paths for a specific trade from the cube."""
         if not self.cube_path.exists():
